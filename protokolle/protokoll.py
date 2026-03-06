@@ -16,7 +16,6 @@ class CMN3DRotAndTrans_withEyemovements_20260211(vxprotocol.StaticProtocol):
         for i in range(4):
             for azim, elev in axis:
                 p = vxprotocol.Phase(duration=5)
-
                 # angular_velocity = 0 -> pause
                 p.set_visual(TranslationGrating,
                                   {TranslationGrating.azimuth: azim,
@@ -63,13 +62,18 @@ class CMN3DRotAndTrans_withEyemovements_20260211(vxprotocol.StaticProtocol):
         p.set_visual(SphereUniformBackground, {SphereUniformBackground.u_color: [0.0, 0.0, 0.0]})
         self.add_phase(p)
 
-        """Continuous Motion Noise"""
+        """Continuous Motion Noise
+            CMN stimulus with established parameters for optimal stimulation.
+            
+            Grey phases for adaptation to illumination.
+            
+            Black phases for longer pause, so fish stays attentive.
+        """
         # Grey
         gray_phase = vxprotocol.Phase(duration=10)
         gray_phase.set_visual(SphereUniformBackground, {SphereUniformBackground.u_color: [0.5, 0.5, 0.5]})
         self.add_phase(gray_phase)
 
-        # CMN
         phase = vxprotocol.Phase(duration=10 * 60)
         phase.set_visual(CMN3D20240606Vel140Scale7, {CMN3D20240606Vel140Scale7.reset_time: 1})
         self.add_phase(phase)
@@ -79,7 +83,11 @@ class CMN3DRotAndTrans_withEyemovements_20260211(vxprotocol.StaticProtocol):
         gray_phase.set_visual(SphereUniformBackground, {SphereUniformBackground.u_color: [0.0, 0.0, 0.0]})
         self.add_phase(gray_phase)
 
-        # CMN
+        # Grey
+        gray_phase = vxprotocol.Phase(duration=10)
+        gray_phase.set_visual(SphereUniformBackground, {SphereUniformBackground.u_color: [0.5, 0.5, 0.5]})
+        self.add_phase(gray_phase)
+
         phase = vxprotocol.Phase(duration=10 * 60)
         phase.set_visual(CMN3D20240606Vel140Scale7, {CMN3D20240606Vel140Scale7.reset_time: 1})
         self.add_phase(phase)
@@ -94,7 +102,6 @@ class CMN3DRotAndTrans_withEyemovements_20260211(vxprotocol.StaticProtocol):
         gray_phase.set_visual(SphereUniformBackground, {SphereUniformBackground.u_color: [0.5, 0.5, 0.5]})
         self.add_phase(gray_phase)
 
-        # CMN
         phase = vxprotocol.Phase(duration=10 * 60)
         phase.set_visual(CMN3D20240606Vel140Scale7, {CMN3D20240606Vel140Scale7.reset_time: 0})
         self.add_phase(phase)

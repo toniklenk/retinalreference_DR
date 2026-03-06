@@ -6,6 +6,11 @@ import h5py
 import numpy as np
 import scipy
 from tqdm import tqdm
+import time
+
+from multiprocessing.shared_memory import SharedMemory
+import concurrent.futures
+
 
 
 def animal_id_from_path(path: Union[Path, str]) -> str:
@@ -25,32 +30,56 @@ def parse_date(_date: Union[str, datetime, date]):
 
     return _date
 
-
 def calculate_ca_frame_times(mirror_position: np.ndarray, mirror_time: np.ndarray, imaging_rate: float):
     mirror_position = np.squeeze(mirror_position)
     mirror_time = np.squeeze(mirror_time)
 
-    peak_prominence = (mirror_position.max() - mirror_position.min()) / 4
-    peak_idcs, _ = scipy.signal.find_peaks(mirror_position, prominence=peak_prominence)
+    # Find all the indices where the value is 1 (these are the frame trigger points)
+    frame_indices = mirror_time[np.where(mirror_position == 1)[0]]
+
+    first_time = frame_indices[0]
+    end_time = frame_indices[-1]
+
+    # Get corresponding times
+    frame_times = np.arange(first_time, end_time, 1 / imaging_rate)
+    return frame_times\
+
+def calculate_ca_frame_times_experimental(mirror_position: np.ndarray, mirror_time: np.ndarray, imaging_rate: float):
+    mirror_position = np.squeeze(mirror_position)
+    mirror_time = np.squeeze(mirror_time)
+
+    # Find all the indices where the value is 1 (these are the frame trigger points)
+    # version 1: uncomment this if data is from downstairs MOM microscope setup
+    #peak_idcs = np.where(np.diff(mirror_position,prepend=mirror_position[0]) == True)[0] # np.diff of boolean array stays boolean
+    frame_indices = mirror_time[np.where(mirror_position == True)[0]]
+    first_time = frame_indices[0]
+    end_time = frame_indices[-1]
+
+    # Find all the indices where the value is 1 (these are the frame trigger points)
+    # version 2: uncomment this if data is from upstairs microscope setup
+    # peak_prominence = (mirror_position.max() - mirror_position.min()) / 4
+    # peak_idcs, _ = scipy.signal.find_peaks(mirror_position, prominence=peak_prominence)
 
     # calculate manually
-    first_peak = peak_idcs[0]
-    end_peak = peak_idcs[-1]
+    #first_peak = peak_idcs[0]
+    #end_peak = peak_idcs[-1] # -2 in downstairs microscope, -1 in upstairs
 
-    first_time = mirror_time[first_peak]
-    end_time = mirror_time[end_peak]
+    #first_time = mirror_time[first_peak]
+    #end_time = mirror_time[end_peak]
 
     # Get corresponding times
     frame_times = np.arange(first_time, end_time, 1 / imaging_rate)
     return frame_times
 
 
-def digest_folder(recording_path: Union[Path, str]):
+def digest_folder(recording_path: Union[Path, str], plane: int = 0):
     """
     Reads in data from suite2p's F.npy file and the Display.h5py and Io.h5py file
 
     Parameters:
         recording_path (Union[Path, str])
+
+        plane (int): index of recorded plane to be digested
 
     Returns:
         flourescence: flourescence traces (ROIs x Timepoints)
@@ -65,6 +94,11 @@ def digest_folder(recording_path: Union[Path, str]):
                         start_idx, end_idx, size
                     type information, about what stimulus was shown during that phase
                         CMN_no_foreground, CMN1/2/3/4, Translation/Rotation grating, SphereUniformBackground
+
+        ca_rec_group_id_fun (function): calculates
+                    1d interpolation of group id at given time from nearest neighbor in recording timeline
+                    (scipy.interpolate.interp1d(record_group_ids_time, record_group_ids, kind='nearest'))
+
     """
     animal_id = animal_id_from_path(recording_path)
     rec_date, rec_id, *_ = recording_id_from_path(recording_path)
@@ -75,16 +109,19 @@ def digest_folder(recording_path: Union[Path, str]):
     recording['rec_date'] = rec_date
     recording['rec_id'] = rec_id
 
-    s2p_path = os.path.join(recording_path, 'suite2p', 'plane0')
+    s2p_path = os.path.join(recording_path, 'suite2p', 'plane' + str(plane))
     print(s2p_path)
 
     print('Calculate frame timing of Fluorescence')
     with h5py.File(os.path.join(recording_path, 'Io.hdf5'), 'r') as io_file:
-        mirror_position = np.squeeze(io_file['ai_y_mirror_in'])[:]
-        mirror_time = np.squeeze(io_file['ai_y_mirror_in_time'])[:]
+        #mirror_position = np.squeeze(io_file['ai_y_mirror_in'])[:]
+        #mirror_time = np.squeeze(io_file['ai_y_mirror_in_time'])[:]
+
+        mirror_position = np.squeeze(io_file['di_frame_sync'])[:]
+        mirror_time = np.squeeze(io_file['di_frame_sync_time'])[:]
 
         # Calculate frame timing
-        ca_times = calculate_ca_frame_times(mirror_position, mirror_time, imaging_rate=2.1798)
+        ca_times = calculate_ca_frame_times(mirror_position, mirror_time, imaging_rate=1.9989) # example data=2.1798
         record_group_ids = io_file['__record_group_id'][:].squeeze()
         record_group_ids_time = io_file['__time'][:].squeeze()
 
@@ -197,7 +234,7 @@ def process_recording(recording, phase, radial_bin_num: int = 16):
 
       if 'CMN' not in phase[f'phase_{n}']['__visual_name']:
         continue
-      if 'CMN_no_foreground' in phase[f'phase_{n}']['__visual_name']:
+      if 'CMN3D20240606Vel140Scale7Long' in phase[f'phase_{n}']['__visual_name']:
         cmn_start_time = phase[f'phase_{n}']['__start_time']
         cmn_end_time = cmn_start_time + phase[f'phase_{n}']['__target_duration']
 
@@ -234,12 +271,12 @@ def process_recording(recording, phase, radial_bin_num: int = 16):
             cmn_motion_vectors_3d_original = np.nan * np.ones(ca_times.shape + (motion_vectors_full.shape[1:]))
         cmn_motion_vectors_3d_original[selection_original] = motion_vectors_full[frame_indices[indices_original]]
 
-    recording[f'positions'] = positions
+    recording[f'positions'] = positions # center of CMN stimulus
     recording[f'patch_corners'] = patch_corners
     recording[f'patch_indices'] = patch_indices
     recording[f'cmn_phase_selection_original'] = cmn_phase_selection_original
     recording[f'cmn_phase_selection'] = cmn_phase_selection
-    recording[f'cmn_motion_vectors_3d'] = cmn_motion_vectors_3d
+    recording[f'cmn_motion_vectors_3d'] = cmn_motion_vectors_3d # (time_resampled, motion_vectors.shape[1:]
     recording[f'cmn_motion_vectors_2d'] = project_to_local_2d_vectors(positions, cmn_motion_vectors_3d)
     recording[f'cmn_motion_vectors_3d_original'] = cmn_motion_vectors_3d_original
     recording[f'cmn_motion_vectors_2d_original'] = project_to_local_2d_vectors(positions,
@@ -269,6 +306,14 @@ def crossproduct(v1: np.ndarray, v2: np.ndarray) -> np.ndarray:
 
 
 def project_to_local_2d_vectors(normals: np.ndarray, vectors: np.ndarray) -> np.ndarray:
+    """
+        Parameters:
+                normals: np.array
+                    centers of CMN stimuli
+
+                vectors: np.array
+                    3D CMN motion vectors
+    """
     vnorms = np.array([0, 0, 1]) - normals * np.dot(normals, np.array([0, 0, 1]))[:, None]
     vnorms /= np.linalg.norm(vnorms, axis=1)[:, None]
 
@@ -335,18 +380,55 @@ def calculate_dff(recording, fluorescences, imaging_rate, window_size: int = 120
     recording['Dff_resampled'] = Dff_resampled
     return Dff_all, Dff_resampled
 
+def calculate_dff_vectorized(recording, fluorescences, imaging_rate, window_size: int = 120, percentile: int = 10):
+    """
+        Vectorized version of calculate_dff.
+    """
+    print('Calculate dff')
+    from numpy.lib.stride_tricks import sliding_window_view
+
+    window_size = int(window_size * imaging_rate)
+    if window_size % 2 == 0:
+        window_size += 1
+    half_window_size = int((window_size - 1) // 2)
+
+    n_neurons, n_timepoints = fluorescences.shape
+
+    # padding
+    pad_left  = np.median(fluorescences[:, :half_window_size], axis=1, keepdims=True) \
+                    * np.ones((1, half_window_size))
+    pad_right = np.median(fluorescences[:, -half_window_size:], axis=1, keepdims=True) \
+                    * np.ones((1, half_window_size))
+    f_padded = np.concatenate([pad_left, fluorescences, pad_right], axis=1)
+
+    Dff_all = np.zeros_like(fluorescences)
+
+    for n in tqdm(range(n_neurons)):
+        windows = sliding_window_view(f_padded[n], window_size)
+        thresholds = np.percentile(windows, percentile, axis=1, keepdims=True)
+        masked   = np.where(windows < thresholds, windows, np.nan)
+        baseline = np.nanmean(masked, axis=1)  # shape: (n_timepoints,)
+        Dff_all[n] = (fluorescences[n] - baseline) / baseline
+
+    Dff_resampled = scipy.interpolate.interp1d(
+        recording['ca_times'], Dff_all, kind='nearest'
+    )(recording['time_resampled'])
+
+    recording['Dff_resampled'] = Dff_resampled
+    return Dff_all, Dff_resampled
 
 def detect_events_with_derivative(recording, test_neuron_dff, excluded_percentile: int = 25,
                                   kernel_sd: float = 0.5):
-    cmn_selection = recording[f'cmn_phase_selection']
+    cmn_selection = recording[f'cmn_phase_selection'] # timepoints with CMN stimulus
     dff = test_neuron_dff
     sample_rate = recording['sample_rate']
 
-    kernel_dts = 10 * sample_rate
+    # init Gaussian kernel with mean=0 and standard deviation 0.5 (adjustable)
+    kernel_dts = 10 * sample_rate # time accuracy of kernel
     kernel_t = np.linspace(-5, 5, kernel_dts)
     norm_kernel = scipy.stats.norm.pdf(kernel_t, scale=kernel_sd)
 
-    # Smoothen DFF
+    # pad, then Smoothen DFF with Gaussian kernel
     dff_plot_pad = np.zeros(dff.shape[0] + kernel_dts - 1)
     dff_plot_pad[kernel_dts // 2:-kernel_dts // 2 + 1] = dff
     dff_conv = scipy.signal.convolve(dff_plot_pad, norm_kernel, mode='valid', method='fft')
@@ -354,7 +436,7 @@ def detect_events_with_derivative(recording, test_neuron_dff, excluded_percentil
     # Calculate derivative
     diff = np.diff(dff_conv, append=[0])
 
-    # Smoothen derivative
+    # pad, then Smoothen derivative
     diff1_pad = np.zeros(diff.shape[0] + kernel_dts - 1)
     diff1_pad[kernel_dts // 2:-kernel_dts // 2 + 1] = diff
     diff1_conv = scipy.signal.convolve(diff1_pad, norm_kernel, mode='valid', method='fft')
@@ -372,28 +454,33 @@ def detect_events_with_derivative(recording, test_neuron_dff, excluded_percentil
     recording['signal_proportion'] = signal_length / sum(cmn_selection)
     recording['signal_dff_mean'] = np.mean(dff[signal_selection])
 
-
 def calculate_reverse_correlations(recording, bootstrap_num: int = 1000):
+    """
+        Calculate original and bootstrapped calcium event triggered averages (ETA's).
+    """
     print('CMN_pipeline')
     # ROI data
-    test_neuron_signal_selection = recording['signal_selection']
+    test_neuron_signal_selection = recording['signal_selection'] # timepoints mask giving events
     # Recording data
     sample_rate = recording['sample_rate']
     radial_bin_edges = recording['radial_bin_edges']
-    cmn_phase_selection = recording['cmn_phase_selection']
+    cmn_phase_selection = recording['cmn_phase_selection'] # timepoints mask giving CMN stim
     motion_vectors_2d = recording['cmn_motion_vectors_2d']
 
     motion_vectors_2d_filtered = motion_vectors_2d[test_neuron_signal_selection, :, :]
     radial_bin_norms, radial_bin_etas = calculate_local_directions(motion_vectors_2d_filtered, radial_bin_edges)
-    recording[f'radial_bin_etas'] = radial_bin_etas
+
+    recording[f'radial_bin_etas'] = radial_bin_etas # ETA's
     recording[f'radial_bin_norms'] = radial_bin_norms
+
     min_frame_shift = 4 * sample_rate
     max_frame_shift = int(cmn_phase_selection.sum() - min_frame_shift)
     frame_shifts = np.random.randint(min_frame_shift, max_frame_shift, size=(bootstrap_num))
+
     radial_bin_bs_etas = np.zeros((bootstrap_num,) + radial_bin_etas.shape)
     signal_within_cmn_selection = test_neuron_signal_selection[cmn_phase_selection]
 
-    for s in range(bootstrap_num):
+    for s in tqdm(range(bootstrap_num)):
         # Circularly permutate signal
         perm_signal_selection = np.roll(signal_within_cmn_selection, frame_shifts[s])
 
@@ -402,6 +489,83 @@ def calculate_reverse_correlations(recording, bootstrap_num: int = 1000):
 
         # Calculate vector ETAs for each local radial bin
         radial_bin_bs_etas[s] = calculate_local_directions(bs_motion_vectors, radial_bin_edges)[1]
+    recording[f'radial_bin_bs_etas'] = radial_bin_bs_etas
+
+
+def bootstrap_shm(idx, ang_name, ang_shape, ang_dtype, vel_name, vel_shape, vel_dtype, bins):
+    shm_ang = SharedMemory(name=ang_name)
+    ang = np.ndarray(ang_shape, dtype=ang_dtype, buffer=shm_ang.buf)[idx]
+
+    shm_vel = SharedMemory(name=vel_name)
+    vel = np.ndarray(vel_shape, dtype=vel_dtype, buffer=shm_vel.buf)[idx]
+
+    return np.mean(vel[:, :, None] * np.logical_and(bins[:-1] <= ang[:, :, None], ang[:, :, None] <= bins[1:]),
+                   axis=0)
+
+def calculate_reverse_correlations_shm(recording, bootstrap_num: int = 1024):
+    """
+        Calculate original and bootstrapped calcium event triggered averages (ETA's).
+    """
+
+
+    print('CMN_pipeline')
+    # ROI data
+    test_neuron_signal_selection = recording['signal_selection']  # timepoints mask giving events
+    # Recording data
+    sample_rate = recording['sample_rate']
+    radial_bin_edges = recording['radial_bin_edges']
+    cmn_phase_selection = recording['cmn_phase_selection']  # timepoints mask giving CMN stim
+    motion_vectors_2d = recording['cmn_motion_vectors_2d']
+
+    motion_vectors_2d_filtered = motion_vectors_2d[test_neuron_signal_selection, :, :]
+    radial_bin_norms, radial_bin_etas = calculate_local_directions(motion_vectors_2d_filtered, radial_bin_edges)
+
+    recording[f'radial_bin_etas'] = radial_bin_etas  # ETA's
+    recording[f'radial_bin_norms'] = radial_bin_norms
+
+    min_frame_shift = 4 * sample_rate
+    max_frame_shift = int(cmn_phase_selection.sum() - min_frame_shift)
+    frame_shifts = np.random.randint(min_frame_shift, max_frame_shift, size=(bootstrap_num))
+
+    radial_bin_bs_etas = np.zeros((bootstrap_num,) + radial_bin_etas.shape)
+    signal_within_cmn_selection = test_neuron_signal_selection[cmn_phase_selection]
+    signal_indices = signal_within_cmn_selection.nonzero()[0][:, None]
+    idcs = np.mod(signal_indices + frame_shifts, signal_within_cmn_selection.size).T
+    mv2d = motion_vectors_2d[cmn_phase_selection]
+
+    # np.float32 is fastest type on common processor architectures
+    angles = np.arctan2(mv2d[:, :, 0], mv2d[:, :, 1]).astype(np.float32)
+    velocities = np.linalg.norm(mv2d, axis=2).astype(np.float32)
+    radial_bin_edges = radial_bin_edges.astype(np.float32)
+
+    # shm=SharedMemory(create=True, size=angles.nbytes+velocities.nbytes+radial_bin_edges.nbytes)
+    ang_shm = SharedMemory(create=True, size=angles.nbytes)
+    ang_shared = np.ndarray(angles.shape, dtype=angles.dtype)
+    ang_shared[:] = angles
+
+    vel_shm = SharedMemory(create=True, size=velocities.nbytes)
+    vel_shared = np.ndarray(velocities.shape, dtype=velocities.dtype)
+    vel_shared[:] = velocities
+
+    start_time = time.time()
+    with concurrent.futures.ProcessPoolExecutor(12) as exe:
+        futures = [exe.submit(
+            bootstrap_shm,
+            idcs[i],
+            ang_shm.name,
+            angles.shape,
+            angles.dtype,
+            vel_shm.name,
+            velocities.shape,
+            velocities.dtype,
+            radial_bin_edges,
+        )
+            for i in range(bootstrap_num)]
+
+        # Calculate vector ETAs for each local radial bin
+        radial_bin_bs_etas = np.array([f.result() for f in futures])
+    print("--- %s seconds ---" % (time.time() - start_time))
+
     recording[f'radial_bin_bs_etas'] = radial_bin_bs_etas
 
 
