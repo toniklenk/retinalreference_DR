@@ -506,8 +506,6 @@ def calculate_reverse_correlations_shm(recording, bootstrap_num: int = 1024):
     """
         Calculate original and bootstrapped calcium event triggered averages (ETA's).
     """
-
-
     print('CMN_pipeline')
     # ROI data
     test_neuron_signal_selection = recording['signal_selection']  # timepoints mask giving events
@@ -538,17 +536,20 @@ def calculate_reverse_correlations_shm(recording, bootstrap_num: int = 1024):
     velocities = np.linalg.norm(mv2d, axis=2).astype(np.float32)
     radial_bin_edges = radial_bin_edges.astype(np.float32)
 
+    # precompute all angles and velocities once and write to shared memory for all parallel processes
     # shm=SharedMemory(create=True, size=angles.nbytes+velocities.nbytes+radial_bin_edges.nbytes)
     ang_shm = SharedMemory(create=True, size=angles.nbytes)
-    ang_shared = np.ndarray(angles.shape, dtype=angles.dtype)
+    ang_shared = np.ndarray(angles.shape, dtype=angles.dtype, buffer=ang_shm.buf)
     ang_shared[:] = angles
 
     vel_shm = SharedMemory(create=True, size=velocities.nbytes)
-    vel_shared = np.ndarray(velocities.shape, dtype=velocities.dtype)
+    vel_shared = np.ndarray(velocities.shape, dtype=velocities.dtype, buffer=vel_shm.buf)
     vel_shared[:] = velocities
 
-    start_time = time.time()
-    with concurrent.futures.ProcessPoolExecutor(12) as exe:
+    start_time = time.time() # time parallel computation
+
+    # adjust maximum number of processes as needed, leave blank to use all kernels
+    with concurrent.futures.ProcessPoolExecutor(max_workers=12) as exe:
         futures = [exe.submit(
             bootstrap_shm,
             idcs[i],
@@ -564,7 +565,7 @@ def calculate_reverse_correlations_shm(recording, bootstrap_num: int = 1024):
 
         # Calculate vector ETAs for each local radial bin
         radial_bin_bs_etas = np.array([f.result() for f in futures])
-    print("--- %s seconds ---" % (time.time() - start_time))
+    print("--- %s seconds ---" % (time.time() - start_time)) # time parallel computation
 
     recording[f'radial_bin_bs_etas'] = radial_bin_bs_etas
 

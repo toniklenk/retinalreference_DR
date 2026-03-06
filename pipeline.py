@@ -35,7 +35,7 @@ def main():
         # einfacher als mit GMMs (wie's in 2019 paper is), robust
         detect_events_with_derivative(recording, test_neuron_dff)
 
-        # ETA berechnung, Abb mit cnts für bewegungsrichtugen im vf
+        # Calcium-event-triggered-averages berechnung
         calculate_reverse_correlations_shm(recording, bootstrap_num=1024)
 
         # 1. Teil Bootstrap test, bootstrap verteilung berechnungen, welche revcorr significant

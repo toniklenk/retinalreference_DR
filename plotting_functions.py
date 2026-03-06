@@ -51,6 +51,12 @@ def _add_grid_patch_coordinates(_vertices: np.ndarray, _patches, duplicated):
 def plot_radial_histograms(ax: plt.Axes,
                            positions: np.ndarray, lengths: np.ndarray, bin_edges: np.ndarray,
                            scale: float = 1.0) -> List[PatchCollection]:
+    """
+        Visualizes receptive field by plotting Calcium-event-triggered-average for each radial bin
+        at each location in a 2D projection of the visual space.
+        Plots are circular bar charts, with one bar for each bin. Significant bars can be colored
+        with a subsequent function.
+    """
     # normlengths = (lengths / lengths.max()) ** 2
     normlengths = lengths / lengths.max()
     normlengths = normlengths ** 2
@@ -91,6 +97,10 @@ significance_cmap = LinearSegmentedColormap.from_list('blue_gray__red', list(zip
 
 
 def plot_radial_significance(radial_bin_significance, patch_collections: List[PatchCollection]):
+    """
+        Colors radial histograms. Significant calcium-event-triggered-averages that represent
+        significant excitatory (red) or suppressive (blue) receptive fields.
+    """
     # Mark significance
     for i, coll in enumerate(patch_collections):
         coll.set_cmap(significance_cmap)
@@ -122,6 +132,9 @@ def plot_patch_grid(ax: plt.Axes, corners, indices):
 
 
 def plot_rf_overview(recording, neuron_num, save_path: str = None):
+    """
+
+    """
     print(f'plot {neuron_num} neuron receptive field')
     # Recording data
     radial_bin_etas = recording[f'radial_bin_etas']
