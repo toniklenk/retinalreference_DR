@@ -276,7 +276,7 @@ def process_recording(recording, phase, radial_bin_num: int = 16):
     recording[f'patch_indices'] = patch_indices
     recording[f'cmn_phase_selection_original'] = cmn_phase_selection_original
     recording[f'cmn_phase_selection'] = cmn_phase_selection
-    recording[f'cmn_motion_vectors_3d'] = cmn_motion_vectors_3d # (time_resampled, motion_vectors.shape[1:]
+    recording[f'cmn_motion_vectors_3d'] = cmn_motion_vectors_3d # (time_resampled, motion_vectors.shape[1:])
     recording[f'cmn_motion_vectors_2d'] = project_to_local_2d_vectors(positions, cmn_motion_vectors_3d)
     recording[f'cmn_motion_vectors_3d_original'] = cmn_motion_vectors_3d_original
     recording[f'cmn_motion_vectors_2d_original'] = project_to_local_2d_vectors(positions,
@@ -493,12 +493,18 @@ def calculate_reverse_correlations(recording, bootstrap_num: int = 1000):
 
 
 def bootstrap_shm(idx, ang_name, ang_shape, ang_dtype, vel_name, vel_shape, vel_dtype, bins):
+    """
+        Worker one bootstrap repetition used in calculate_reverse_correlations_shm
+        in parallel processing. Uses shared memory for optimizing runtime.
+    """
+    # access shared memory
     shm_ang = SharedMemory(name=ang_name)
     ang = np.ndarray(ang_shape, dtype=ang_dtype, buffer=shm_ang.buf)[idx]
 
     shm_vel = SharedMemory(name=vel_name)
     vel = np.ndarray(vel_shape, dtype=vel_dtype, buffer=shm_vel.buf)[idx]
 
+    # calculate calcium-event-triggered averge (ETA)
     return np.mean(vel[:, :, None] * np.logical_and(bins[:-1] <= ang[:, :, None], ang[:, :, None] <= bins[1:]),
                    axis=0)
 
@@ -518,8 +524,8 @@ def calculate_reverse_correlations_shm(recording, bootstrap_num: int = 1024):
     motion_vectors_2d_filtered = motion_vectors_2d[test_neuron_signal_selection, :, :]
     radial_bin_norms, radial_bin_etas = calculate_local_directions(motion_vectors_2d_filtered, radial_bin_edges)
 
-    recording[f'radial_bin_etas'] = radial_bin_etas  # ETA's
-    recording[f'radial_bin_norms'] = radial_bin_norms
+    recording['radial_bin_etas'] = radial_bin_etas  # ETA's
+    recording['radial_bin_norms'] = radial_bin_norms
 
     min_frame_shift = 4 * sample_rate
     max_frame_shift = int(cmn_phase_selection.sum() - min_frame_shift)
@@ -568,6 +574,7 @@ def calculate_reverse_correlations_shm(recording, bootstrap_num: int = 1024):
     print("--- %s seconds ---" % (time.time() - start_time)) # time parallel computation
 
     recording[f'radial_bin_bs_etas'] = radial_bin_bs_etas
+
 
 
 def calculate_directional_significance(recording, bernoulli_alpha: float = 0.05):
@@ -758,9 +765,23 @@ def calculate_local_directions(motvecs: np.ndarray, bin_edges: np.ndarray) -> Tu
 def calc_preferred_directions(bin_etas: np.ndarray, bin_significances: np.ndarray,
                               bin_centers: np.ndarray) -> np.ndarray:
     """
-    bin_etas: shape (patch_num, bin_num)
-    bin_significances: shape (patch_num, bin_num)
-    bin_centers: shape (bin_num,)
+        Calculates preferred direction of each radial bin as weighted sum of significant directions.
+        Weigh each direction by its calcium-event-triggered average.
+        influence of ETA absolute values is normed out.
+
+        Parameters:
+            bin_etas: shape (patch_num, bin_num)
+                calium-event-triggered averages
+            bin_significances: shape (patch_num, bin_num)
+                1 if bin is significantly excitatory
+                -1 if bin is significantly suppressive
+                0 if bin is not significant
+            bin_centers: shape (bin_num,)
+                radial bin centers. centers of the radias bins in which angles are divided in ETA calculation.
+                bin_num = 16 in the default configuration
+
+        Returns:
+            population_vectors: shape (patch_num,)
     """
 
     # Calculate direction vectors for given angles
@@ -776,6 +797,9 @@ def calc_preferred_directions(bin_etas: np.ndarray, bin_significances: np.ndarra
             idcs = np.where(signs)[0]
 
             # Calculate
+            # normed in terms of ETA, this means that large vectors arise not from high ETA,
+            # but from very coherent ETAs in one bin (weird a bit)
+            # this means that vecs_pop are not unitary vectors!
             vecs = etas[idcs][:, None] * direction_vectors[idcs]
             vec_pop = np.sum(vecs, axis=0) / np.sum(etas)
 

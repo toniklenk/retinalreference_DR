@@ -1,3 +1,5 @@
+import pickle
+from pathlib import Path
 from main_functions import *
 from plotting_functions import *
 
@@ -28,6 +30,9 @@ def main():
     Dff_resampled = scipy.interpolate.interp1d(recording['ca_times'], Dff_all_neuron, kind='nearest')(
             recording['time_resampled'])
 
+    save_results=False
+    save_etas = True
+
     # iterated individual neurons, draws receptive field of each neuron to .png and .pdf
     for k, i in tqdm(enumerate(range(Dff_all_neuron.shape[0]))):
         test_neuron_dff = Dff_resampled[i, :]
@@ -41,6 +46,17 @@ def main():
         # 1. Teil Bootstrap test, bootstrap verteilung berechnungen, welche revcorr significant
         calculate_directional_significance(recording)
 
+        if save_etas:
+            print('saving etas and bootstrapped etas to disk...')
+            path=os.path.join(recording_path, 'etas and bootsrapping etas',)
+            Path(path).mkdir(parents=True, exist_ok=True) # create dir if needed
+            with open(
+                    os.path.join(path, f'recording_neuron{str(i)}.pkl'),
+                    'wb') as f:
+                pickle.dump(recording, f)
+
+
+
         # added by me: 2. Teil
         calculate_directional_preference(recording)
 
@@ -50,7 +66,22 @@ def main():
         # cluster based statistics, (2-step NP bootsrap test)
         calculate_cluster_significances(recording)
 
+        if save_results:
+            print('saving results to disk...')
+            path=os.path.join(recording_path, 'recording_dicts',)
+            Path(path).mkdir(parents=True, exist_ok=True) # create dir if needed
+            with open(
+                    os.path.join(path, f'recording_neuron{str(i)}.pkl'),
+                    'wb') as f:
+                pickle.dump(recording, f)
+
+
+        # create directories if needed
+        Path(os.path.join(save_path, 'pdf')).mkdir(parents=True, exist_ok=True)
+        Path(os.path.join(save_path, 'png')).mkdir(parents=True, exist_ok=True)
         plot_rf_overview(recording, i, save_path)
+
+
         print(1)
 
 if __name__ == '__main__':
