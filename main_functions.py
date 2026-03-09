@@ -514,28 +514,29 @@ def calculate_reverse_correlations_shm(recording, bootstrap_num: int = 1024):
     """
     print('CMN_pipeline')
     # ROI data
-    test_neuron_signal_selection = recording['signal_selection']  # timepoints mask giving events
+    test_neuron_signal_selection = recording['signal_selection']  # timepoints mask giving events during cmn stim
     # Recording data
     sample_rate = recording['sample_rate']
     radial_bin_edges = recording['radial_bin_edges']
     cmn_phase_selection = recording['cmn_phase_selection']  # timepoints mask giving CMN stim
     motion_vectors_2d = recording['cmn_motion_vectors_2d']
 
+    # calculate true ETAs
     motion_vectors_2d_filtered = motion_vectors_2d[test_neuron_signal_selection, :, :]
     radial_bin_norms, radial_bin_etas = calculate_local_directions(motion_vectors_2d_filtered, radial_bin_edges)
-
     recording['radial_bin_etas'] = radial_bin_etas  # ETA's
-    recording['radial_bin_norms'] = radial_bin_norms
+    recording['radial_bin_norms'] = radial_bin_norms #
 
+    # calculate bootstrapped ETAs
     min_frame_shift = 4 * sample_rate
     max_frame_shift = int(cmn_phase_selection.sum() - min_frame_shift)
     frame_shifts = np.random.randint(min_frame_shift, max_frame_shift, size=(bootstrap_num))
 
     radial_bin_bs_etas = np.zeros((bootstrap_num,) + radial_bin_etas.shape)
+    mv2d = motion_vectors_2d[cmn_phase_selection]
     signal_within_cmn_selection = test_neuron_signal_selection[cmn_phase_selection]
     signal_indices = signal_within_cmn_selection.nonzero()[0][:, None]
     idcs = np.mod(signal_indices + frame_shifts, signal_within_cmn_selection.size).T
-    mv2d = motion_vectors_2d[cmn_phase_selection]
 
     # np.float32 is fastest type on common processor architectures
     angles = np.arctan2(mv2d[:, :, 0], mv2d[:, :, 1]).astype(np.float32)
@@ -765,9 +766,10 @@ def calculate_local_directions(motvecs: np.ndarray, bin_edges: np.ndarray) -> Tu
 def calc_preferred_directions(bin_etas: np.ndarray, bin_significances: np.ndarray,
                               bin_centers: np.ndarray) -> np.ndarray:
     """
-        Calculates preferred direction of each radial bin as weighted sum of significant directions.
+        Calculates preferred direction of each radial patch/bin as weighted sum of significant directions.
         Weigh each direction by its calcium-event-triggered average.
-        influence of ETA absolute values is normed out.
+        Influence of ETA absolute values is normed out.
+        (note: this is a different binning than the one done during calculation of the ETA.)
 
         Parameters:
             bin_etas: shape (patch_num, bin_num)
