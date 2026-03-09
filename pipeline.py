@@ -31,7 +31,7 @@ def main():
             recording['time_resampled'])
 
     save_results=False
-    save_etas = True
+    save_etas=True
 
     # iterated individual neurons, draws receptive field of each neuron to .png and .pdf
     for k, i in tqdm(enumerate(range(Dff_all_neuron.shape[0]))):
@@ -74,7 +74,6 @@ def main():
                     os.path.join(path, f'recording_neuron{str(i)}.pkl'),
                     'wb') as f:
                 pickle.dump(recording, f)
-
 
         # create directories if needed
         Path(os.path.join(save_path, 'pdf')).mkdir(parents=True, exist_ok=True)
