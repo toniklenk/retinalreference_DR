@@ -1,16 +1,11 @@
-from pathlib import Path
-from typing import Any, Dict, List, Union, Tuple
-from datetime import date, datetime
-import os
-import h5py
+import os, h5py, time, scipy, concurrent.futures
 import numpy as np
-import scipy
 from tqdm import tqdm
-import time
-
+from pathlib import Path
+from datetime import date, datetime
+from typing import Any, Dict, List, Union, Tuple
+from numpy.lib.stride_tricks import sliding_window_view
 from multiprocessing.shared_memory import SharedMemory
-import concurrent.futures
-
 
 
 def animal_id_from_path(path: Union[Path, str]) -> str:
@@ -385,14 +380,10 @@ def calculate_dff_vectorized(recording, fluorescences, imaging_rate, window_size
         Vectorized version of calculate_dff.
     """
     print('Calculate dff')
-    from numpy.lib.stride_tricks import sliding_window_view
-
     window_size = int(window_size * imaging_rate)
     if window_size % 2 == 0:
         window_size += 1
     half_window_size = int((window_size - 1) // 2)
-
-    n_neurons, n_timepoints = fluorescences.shape
 
     # padding
     pad_left  = np.median(fluorescences[:, :half_window_size], axis=1, keepdims=True) \
@@ -401,14 +392,12 @@ def calculate_dff_vectorized(recording, fluorescences, imaging_rate, window_size
                     * np.ones((1, half_window_size))
     f_padded = np.concatenate([pad_left, fluorescences, pad_right], axis=1)
 
-    Dff_all = np.zeros_like(fluorescences)
-
-    for n in tqdm(range(n_neurons)):
-        windows = sliding_window_view(f_padded[n], window_size)
-        thresholds = np.percentile(windows, percentile, axis=1, keepdims=True)
-        masked   = np.where(windows < thresholds, windows, np.nan)
-        baseline = np.nanmean(masked, axis=1)  # shape: (n_timepoints,)
-        Dff_all[n] = (fluorescences[n] - baseline) / baseline
+    # vectorized version of nested loop
+    windows = sliding_window_view(f_padded, [1, window_size])
+    thresholds = np.percentile(windows, percentile, axis=3, keepdims=True)
+    windows_masked = np.where(windows < thresholds, windows, np.nan)
+    baselines = np.nanmean(windows_masked, axis=3).squeeze()
+    Dff_all = fluorescences - baselines
 
     Dff_resampled = scipy.interpolate.interp1d(
         recording['ca_times'], Dff_all, kind='nearest'
@@ -518,7 +507,7 @@ def calculate_reverse_correlations_shm(recording, bootstrap_num: int = 1024):
     # Recording data
     sample_rate = recording['sample_rate']
     radial_bin_edges = recording['radial_bin_edges']
-    cmn_phase_selection = recording['cmn_phase_selection']  # timepoints mask giving CMN stim
+    cmn_phase_selection = recording['cmn_phase_selection'] # timepoints mask giving CMN stim
     motion_vectors_2d = recording['cmn_motion_vectors_2d']
 
     # calculate true ETAs
@@ -622,6 +611,9 @@ def calculate_directional_significance(recording, bernoulli_alpha: float = 0.05)
 
 
 def calculate_directional_preference(recording):
+    """
+        Just a call to calc_preferred_directions.
+    """
     radial_bin_centers = recording['radial_bin_centers']
     radial_bin_etas = recording['radial_bin_etas']
     radial_bin_significances_greater = recording['radial_bin_significances'] > 0
@@ -744,10 +736,10 @@ def find_clusters(recording, sign_radial_bin_threshold: int = 1):
     recording['bs_cluster_unique_patch_indices'] = bs_cluster_unique_indices
 
 
-def calculate_local_directions(motvecs: np.ndarray, bin_edges: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def calculate_local_directions(motion_vectors: np.ndarray, bin_edges: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     # Convert to angle and velocity
-    motion_angles = np.arctan2(motvecs[:, :, 1], motvecs[:, :, 0])
-    motion_velocities = np.linalg.norm(motvecs, axis=2)
+    motion_angles = np.arctan2(motion_vectors[:, :, 1], motion_vectors[:, :, 0])
+    motion_velocities = np.linalg.norm(motion_vectors, axis=2)
     # Backwards transform (keep for reference):
     # motion_vectors_2d = np.zeros((*motion_angles.shape[:2], 2))
     # motion_vectors_2d[:,:,0] = motion_velocities * np.cos(motion_angles)
@@ -767,7 +759,7 @@ def calc_preferred_directions(bin_etas: np.ndarray, bin_significances: np.ndarra
                               bin_centers: np.ndarray) -> np.ndarray:
     """
         Calculates preferred direction of each radial patch/bin as weighted sum of significant directions.
-        Weigh each direction by its calcium-event-triggered average.
+        Weigh each direction by its calcium-event-triggered average (ETA).
         Influence of ETA absolute values is normed out.
         (note: this is a different binning than the one done during calculation of the ETA.)
 
@@ -803,7 +795,7 @@ def calc_preferred_directions(bin_etas: np.ndarray, bin_significances: np.ndarra
             # but from very coherent ETAs in one bin (weird a bit)
             # this means that vecs_pop are not unitary vectors!
             vecs = etas[idcs][:, None] * direction_vectors[idcs]
-            vec_pop = np.sum(vecs, axis=0) / np.sum(etas)
+            vec_pop = np.sum(vecs, axis=0) / np.sum(etas) # TODO: might need to do etas[idcs] instead
 
         else:
             vec_pop = np.array([0, 0])

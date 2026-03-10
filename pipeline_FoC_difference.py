@@ -1,14 +1,14 @@
 import pickle
 from pathlib import Path
 from main_functions import *
+from main_functions import *
 from plotting_functions import *
 
 
+
 def main():
-    #better to use \ as raw backslash
-    # recording_path = r"example_data\fish1_20250815\2025-08-15_recording1" # example data
-    recording_path = r"data\2026-02-25_mb_fish1_rec2"
-    save_path = r"results\2026-02-25_mb_fish1_rec2_run2"
+    recording_path = os.path.join('data','2026-02-25_mb_fish1_rec2')
+    save_path = os.path.join('results','2026-02-25_mb_fish1_rec2_run2')
 
     fluorescence, recording, phase, ca_rec_group_id_fun = digest_folder(recording_path, plane=0)
 
@@ -17,14 +17,13 @@ def main():
     # (info: time domain is resampled from ~2.1Hz to 10Hz in digest_folder())
     process_recording(recording, phase, radial_bin_num=16)
 
-    # fast=True
-    # if fast==True:
-    #     Dff_all_neuron, Dff_resampled = calculate_dff_vectorized(recording, fluorescence, recording['imaging_rate'])
-    #     np.save(os.path.join(save_path, "deconvolved_Dff_original_fast.npy"), Dff_all_neuron)
-    # else:
-    #     Dff_all_neuron, Dff_resampled = calculate_dff(recording, fluorescence, recording['imaging_rate'])
-    #     np.save(os.path.join(save_path, "deconvolved_Dff_original.npy"), Dff_all_neuron)
-
+    fast=True
+    if fast==True:
+        Dff_all_neuron, Dff_resampled = calculate_dff_vectorized(recording, fluorescence, recording['imaging_rate'])
+        np.save(os.path.join(save_path, "deconvolved_Dff_original_fast.npy"), Dff_all_neuron)
+    else:
+        Dff_all_neuron, Dff_resampled = calculate_dff(recording, fluorescence, recording['imaging_rate'])
+        np.save(os.path.join(save_path, "deconvolved_Dff_original.npy"), Dff_all_neuron)
 
     Dff_all_neuron = np.load(os.path.join(save_path, "deconvolved_Dff_original.npy"))
     Dff_resampled = scipy.interpolate.interp1d(recording['ca_times'], Dff_all_neuron, kind='nearest')(
@@ -46,14 +45,7 @@ def main():
         calculate_reverse_correlations_shm(recording, bootstrap_num=1024)
         # calculate p-values for both true and bootstrapped ETAs
         calculate_directional_significance(recording)
-        # if save_etas:
-        #     print('saving etas and bootstrapped etas to disk...')
-        #     path=os.path.join(recording_path, 'etas and bootsrapping etas',)
-        #     Path(path).mkdir(parents=True, exist_ok=True) # create dir if needed
-        #     with open(
-        #             os.path.join(path, f'recording_neuron{str(i)}.pkl'),
-        #             'wb') as f:
-        #         pickle.dump(recording, f)
+
 
         # STEP 2 of 2-step bootstrap test
         # find clusters in original and bootstrapped etas p-values (these represent the first order statistic)
