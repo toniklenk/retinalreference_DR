@@ -155,9 +155,9 @@ def bootstrap_shm(idx, ang_name, ang_shape, ang_dtype, vel_name, vel_shape, vel_
     return np.mean(vel[:, :, None] * np.logical_and(bins[:-1] <= ang[:, :, None], ang[:, :, None] <= bins[1:]),
                    axis=0)
 
-def calculate_reverse_correlations_shm_generalAPI(
-        motion_vectors: np.array,
-        signal: np.array,
+def calculate_radial_bin_bs_etas(
+        motion_vectors: np.ndarray,
+        signal: np.ndarray,
         cmn_phases,
         sample_rate,
         radial_bin_edges,
@@ -165,13 +165,16 @@ def calculate_reverse_correlations_shm_generalAPI(
         num_workers: int = 12
 ):
     """
-        Calculate original and bootstrapped calcium event triggered averages (ETA's).
+        Calculate bootstrapped distribution of calcium event triggered averages (ETA's).
+        - precompute all angles and velocities once
+        - shared memory for all parallel processes, no problem bc its only read by bootstrapping function
+        - np.float32 because it is the fastest float type on common processor architectures
 
         Parameters:
             motion_vectors: np.array (float) (time x n_radial_bins x 2)
                 typical dimensions; (~30 000, 320, 2)
                 cmn_motion_vectors_2d. CMN motion vectors projected to 2D. ETA calculation is done fully in 2D.
-            signal: np.arrary (bool) (time x 1)
+            signal: np.array (bool) (time x 1)
                 indicates timepoints with calcium events during CMN stimulation periods.
             cmn_phases: np.array (bool) (time x 1)
                 indicates timepoints with cmn stimulation.
@@ -183,25 +186,13 @@ def calculate_reverse_correlations_shm_generalAPI(
                 number of bootstrapping iterations.
             num_workers: int
                 number of parallel processes in computing bootstrapping repetitions. 12 should be fast
-                while still leaving enough ressources to keep using PC while script is running on a 14 core cpu.
+                while still leaving enough resources to keep using PC while script is running on a 14 core cpu.
         Returns:
             radial_bin_etas:
                 true ETAs
             radial_bin_bs_etas:
                 bootstrapped ETAs
 
-    """
-    # calculate true ETAs =============================
-    radial_bin_norms, radial_bin_etas = calculate_local_directions(
-        motion_vectors[signal, :, :],
-        radial_bin_edges)
-    # =================================================
-
-    """
-      Calculate bootstrapped ETAs
-        - precompute all angles and velocities once
-        - shared memory for all parallel processes, no problem bc its only read by bootstrapping function.
-        - np.float32 because it's fastest float type on common processor architectures
     """
     motion_vectors_cmn = motion_vectors[cmn_phases]
     signal_within_cmn_selection = signal[cmn_phases]
@@ -228,9 +219,8 @@ def calculate_reverse_correlations_shm_generalAPI(
     frame_shifts = np.random.randint(min_frame_shift, max_frame_shift, size=(bootstrap_num))
     signal_indices = signal_within_cmn_selection.nonzero()[0][:, None]
     idcs = np.mod(signal_indices + frame_shifts, signal_within_cmn_selection.size).T
-    start_time = time.time() # time parallel computation
 
-    # adjust maximum number of processes as needed, leave blank to use all kernels
+    start_time = time.time() # time parallel computation
     with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as exe:
         futures = [exe.submit(
             bootstrap_shm,
@@ -248,9 +238,7 @@ def calculate_reverse_correlations_shm_generalAPI(
         # Calculate vector ETAs for each local radial bin
         radial_bin_bs_etas = np.array([f.result() for f in futures])
     print("--- %s seconds ---" % (time.time() - start_time)) # time parallel computation
-    # =================================================
-
-    return radial_bin_etas, radial_bin_norms, radial_bin_bs_etas
+    return radial_bin_bs_etas
 
 
 def calc_preferred_directions_generalAPI(
