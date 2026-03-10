@@ -15,30 +15,128 @@ import time
 from multiprocessing.shared_memory import SharedMemory
 import concurrent.futures
 
-def calculate_local_directions(motvecs: np.ndarray, bin_edges: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+# def detect_events_with_derivative(recording, test_neuron_dff, excluded_percentile: int = 25,
+#                                   kernel_sd: float = 0.5):
+def detect_events_with_derivative_generalAPI(
+        cmn_selection, # timepoints with CMN stimulus
+        dff,
+        sample_rate,
+        excluded_percentile: int = 25,
+        kernel_sd: float = 0.5):
+    """
+        Detect calcium-events in raw flourescence trace. Done with a different, more simple method
+         than in the 2019 paper.
+
+        Parameters:
+            cmn_selection: np.array (timepoints x 1)
+                Boolean mask of timepoints with CMN stimulus
+            dff: np.array (timepoints x 1)
+                raw fluorescence trace of one neuron
+            sample_rate: float
+                sample rate of the fluorescence trace
+            excluded_percentile: int
+            kernel_sd: float
+                determines smoothing of signal
+        Returns:
+            signal_selection: np.array (timepoints x 1)
+            signal_length: int
+            signal_proportion: float
+            signal_dff_mean: float
+    """
+    # init Gaussian kernel with mean=0 and standard deviation 0.5 (adjustable)
+    kernel_dts = 10 * sample_rate # time accuracy of kernel
+    kernel_t = np.linspace(-5, 5, kernel_dts)
+    norm_kernel = scipy.stats.norm.pdf(kernel_t, scale=kernel_sd)
+
+    # pad, then Smoothen DFF with Gaussian kernel
+    dff_plot_pad = np.zeros(dff.shape[0] + kernel_dts - 1)
+    dff_plot_pad[kernel_dts // 2:-kernel_dts // 2 + 1] = dff
+    dff_conv = scipy.signal.convolve(dff_plot_pad, norm_kernel, mode='valid', method='fft')
+
+    # Calculate derivative
+    diff = np.diff(dff_conv, append=[0])
+
+    # pad, then Smoothen derivative
+    diff1_pad = np.zeros(diff.shape[0] + kernel_dts - 1)
+    diff1_pad[kernel_dts // 2:-kernel_dts // 2 + 1] = diff
+    diff1_conv = scipy.signal.convolve(diff1_pad, norm_kernel, mode='valid', method='fft')
+
+    # Calculate signal based on smoothened derivative
+    signal_selection = (diff1_conv > 0) & cmn_selection
+    # Exclude bottom 25% percentile
+    signal_selection &= dff >= np.percentile(dff[signal_selection], excluded_percentile)
+
+    return signal_selection, sum(signal_selection), sum(signal_selection)/sum(cmn_selection), np.mean(dff[signal_selection])
+
+def generate_eyepos_masks(
+        eyepos_left,
+        eyepos_right,
+        eyepos_time,
+        time_resampled,
+        q1_min_left,
+        q1_min_right,
+        q3_max_left,
+        q3_max_right):
+    """
+        Generate maks for selecting data that corresponds to eyepositions to the left and right, respectively.
+        Eye positions are resampled to given timeline before selection.
+        Parameters:
+            eyepos_left, eyepos_right: np.array (timepoints x 1)
+                Eye positions at each timepoint.
+            eyepos_time: np.array (timepoints x 1)
+                Original time axis of eye positions.
+            time_resampled:
+                Timeline to resample eyepositions to.
+            q1_min_left, q1_min_right: float
+                threshold for left and right eye to be on one side
+            q3_max_left, q3_max_right: float
+                threshold for left and right eye to be on the other side.
+    """
+    eye_pos = np.column_stack((
+        np.array(eyepos_left).squeeze(),
+        np.array(eyepos_right).squeeze()))
+
+    eye_pos_resampled = scipy.interpolate.interp1d(
+        np.array(eyepos_time).squeeze(),
+        eye_pos.T,
+        kind='nearest')(
+        time_resampled
+    ).T
+    # select data in quadrants
+    q1_mask = np.logical_and(
+        eye_pos_resampled[:, 0] > q1_min_left,
+        eye_pos_resampled[:, 1] > q1_min_right)
+    q3_mask = np.logical_and(
+        eye_pos_resampled[:, 0] < q3_max_left,
+        eye_pos_resampled[:, 1] < q3_max_right)
+
+    return q1_mask, q3_mask
+
+
+def calculate_local_directions_generalAPI(motion_vectors: np.ndarray, bin_edges: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """
         Calculate calcium-event-triggered averages (ETA), as described in Zhang Y., Huang R., et. at (2022).
-        Directional angles of motion vectors are binned in to n (default=16) bins, then motion velocities
-        are averaged for each bin.
+        Motion velocities are binned in to n (default=16) bins by their corresponding motion angles,
+        and then averaged to yield ETAs.
         Parameters:
-            motvecs...
+            motion_vectors: np.array
+                Motion vectors at timepoints with calcium-event.
+
     """
-    # Convert to angle and velocity
-    motion_angles = np.arctan2(motvecs[:, :, 1], motvecs[:, :, 0])
-    motion_velocities = np.linalg.norm(motvecs, axis=2)
+    angles = np.arctan2(motion_vectors[:, :, 1], motion_vectors[:, :, 0])
+    velocities = np.linalg.norm(motion_vectors, axis=2)
     # Backwards transform (keep for reference):
     # motion_vectors_2d = np.zeros((*motion_angles.shape[:2], 2))
     # motion_vectors_2d[:,:,0] = motion_velocities * np.cos(motion_angles)
     # motion_vectors_2d[:,:,1] = motion_velocities * np.sin(motion_angles)
 
     # Calculate bin vectors for each patch and frame weighted by the local velocities
-    bin_norms = motion_velocities[:, :, None] * np.logical_and(bin_edges[:-1] <= motion_angles[:, :, None],
-                                                               motion_angles[:, :, None] <= bin_edges[1:])
+    bin_norms = velocities[:, :, None] * np.logical_and(
+        angles[:, :, None] >= bin_edges[:-1],
+        angles[:, :, None] < bin_edges[1:])
 
-    # Calculate ETAs
-    bin_etas = np.mean(bin_norms, axis=0)
-
-    return bin_norms, bin_etas
+    # norms, ETAs
+    return bin_norms, bin_norms.mean(axis=0)
 
 def bootstrap_shm(idx, ang_name, ang_shape, ang_dtype, vel_name, vel_shape, vel_dtype, bins):
     """
@@ -153,3 +251,56 @@ def calculate_reverse_correlations_shm_generalAPI(
     # =================================================
 
     return radial_bin_etas, radial_bin_norms, radial_bin_bs_etas
+
+
+def calc_preferred_directions_generalAPI(
+        bin_etas: np.ndarray,
+        bin_significances: np.ndarray,
+        bin_centers: np.ndarray) -> np.ndarray:
+    """
+        Calculates preferred direction of each radial patch/bin as weighted sum of significant directions.
+        Weigh each direction by its calcium-event-triggered average (ETA).
+        Influence of ETA absolute values is normed out.
+        (note: this is a different binning than the one done during calculation of the ETA.)
+
+        Parameters:
+            bin_etas: shape (patch_num, bin_num)
+                calcium-event-triggered averages
+            bin_significances: shape (patch_num, bin_num)
+                1 if bin is significantly excitatory
+                -1 if bin is significantly suppressive
+                0 if bin is not significant
+            bin_centers: shape (bin_num,)
+                radial bin centers. centers of the radial bins in which angles are divided in ETA calculation.
+                bin_num = 16 in the default configuration
+
+        Returns:
+            population_vectors: shape (patch_num,)
+    """
+
+    # Calculate direction vectors for given angles
+    direction_vectors = np.array([[np.cos(a), np.sin(a)] for a in bin_centers])
+
+    # Calculate population vector for each patch based on significant direction bins
+    population_vectors = np.zeros(bin_etas.shape[:1] + (2,))
+    for idx, (etas, signs) in enumerate(zip(bin_etas, bin_significances)):
+
+        if np.any(signs):
+
+            # Select excitatory bins
+            idcs = np.where(signs)[0]
+
+            # Calculate
+            # normed in terms of ETA, this means that large vectors arise not from high ETA,
+            # but from very coherent ETAs in one bin (weird a bit)
+            # this means that vecs_pop are not unitary vectors!
+            vecs = etas[idcs][:, None] * direction_vectors[idcs]
+            vec_pop = np.sum(vecs, axis=0) / np.sum(etas)  # TODO: might need to do etas[idcs] instead
+
+        else:
+            vec_pop = np.array([0, 0])
+
+        # Append
+        population_vectors[idx] = vec_pop
+
+    return population_vectors
