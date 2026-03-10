@@ -4,7 +4,7 @@ from main_functions_generalAPI import *
 
 
 def main():
-    recording_name = '2026-02-25_mb_fish8_rec2'
+    recording_name = '2026-03-04_mb_fish8_rec2'
     recording_path = os.path.join('data', recording_name)
     save_path = os.path.join('results', recording_name)
 
@@ -13,8 +13,7 @@ def main():
 
     # load eyetracking data
     camera = h5py.File(os.path.join(recording_path, 'Camera.hdf5'), 'r')
-    fluorescence, rec, phase, ca_rec_group_id_fun = digest_folder(recording_path, plane=0)
-
+    fluorescence, rec, phase, ca_rec_group_id_fun = digest_folder(recording_path, imaging_rate=1.9957, plane=0)
     # add resampled CMN data to resampled time domain for each phase
     # (info: time domain is resampled from ~2.1Hz to 10Hz in digest_folder())
     process_recording(rec, phase, radial_bin_num=16)
@@ -43,8 +42,8 @@ def main():
         # determine calcium events
         # do this before subselecting data with eye positions to avoid jumps in the first derivative
         rec['signal_selection'], rec['signal_length'], rec['signal_proportion'], rec['signal_dff_mean']\
-            =detect_events_with_derivative(
-            rec['signal_selection'],
+            =detect_events_with_derivative_generalAPI(
+            rec['cmn_phase_selection'],
             dff_i,
             rec['sample_rate'])
 

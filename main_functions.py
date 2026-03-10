@@ -67,7 +67,7 @@ def calculate_ca_frame_times_experimental(mirror_position: np.ndarray, mirror_ti
     return frame_times
 
 
-def digest_folder(recording_path: Union[Path, str], plane: int = 0):
+def digest_folder(recording_path: Union[Path, str], imaging_rate: float, plane: int = 0):
     """
     Reads in data from suite2p's F.npy file and the Display.h5py and Io.h5py file
 
@@ -116,7 +116,7 @@ def digest_folder(recording_path: Union[Path, str], plane: int = 0):
         mirror_time = np.squeeze(io_file['di_frame_sync_time'])[:]
 
         # Calculate frame timing
-        ca_times = calculate_ca_frame_times(mirror_position, mirror_time, imaging_rate=1.9989) # example data=2.1798
+        ca_times = calculate_ca_frame_times(mirror_position, mirror_time, imaging_rate=imaging_rate) # example data=2.1798, 1.9989
         record_group_ids = io_file['__record_group_id'][:].squeeze()
         record_group_ids_time = io_file['__time'][:].squeeze()
 

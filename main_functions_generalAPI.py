@@ -154,6 +154,7 @@ def bootstrap_shm(idx, ang_name, ang_shape, ang_dtype, vel_name, vel_shape, vel_
     # calculate calcium-event-triggered averge (ETA)
     return np.mean(vel[:, :, None] * np.logical_and(bins[:-1] <= ang[:, :, None], ang[:, :, None] <= bins[1:]),
                    axis=0)
+    # release shared memory
 
 def calculate_radial_bin_bs_etas(
         motion_vectors: np.ndarray,
@@ -238,6 +239,10 @@ def calculate_radial_bin_bs_etas(
         # Calculate vector ETAs for each local radial bin
         radial_bin_bs_etas = np.array([f.result() for f in futures])
     print("--- %s seconds ---" % (time.time() - start_time)) # time parallel computation
+    # release shared memory
+    ang_shm.close()
+    vel_shm.close()
+    vel_shm.unlink()
     return radial_bin_bs_etas
 
 
