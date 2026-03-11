@@ -4,8 +4,6 @@ from main_functions_generalAPI import calculate_local_directions_generalAPI, gen
     calc_preferred_directions_generalAPI
 from plotting_functions import *
 
-
-
 def main():
     recording_path = os.path.join('data','2026-02-25_mb_fish1_rec2')
     save_path = os.path.join('results','2026-02-25_mb_fish1_rec2_run2')

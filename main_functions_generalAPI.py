@@ -5,12 +5,10 @@
 from pathlib import Path
 from typing import Any, Dict, List, Union, Tuple
 from datetime import date, datetime
-import os
-import h5py
+import os, time, scipy
 import numpy as np
-import scipy
 from tqdm import tqdm
-import time
+from main_functions import create_clusters
 
 from multiprocessing.shared_memory import SharedMemory
 import concurrent.futures
@@ -245,6 +243,7 @@ def calculate_radial_bin_bs_etas(
     # release shared memory
     ang_shm.close()
     vel_shm.close()
+    ang_shm.unlink()
     vel_shm.unlink()
     return radial_bin_bs_etas
 
@@ -254,6 +253,7 @@ def calc_preferred_directions_generalAPI(
         bin_significances: np.ndarray,
         bin_centers: np.ndarray) -> np.ndarray:
     """
+        Calculate estimated RF.
         Calculates preferred direction of each radial patch/bin as weighted sum of significant directions.
         Weigh each direction by its calcium-event-triggered average (ETA).
         Influence of ETA absolute values is normed out.
@@ -300,3 +300,102 @@ def calc_preferred_directions_generalAPI(
         population_vectors[idx] = vec_pop
 
     return population_vectors
+
+def calculate_directional_significance_generalAPI(
+        radial_bin_etas,
+        radial_bin_bs_etas,
+        bernoulli_alpha: float = 0.05):
+    bootstrap_num = radial_bin_bs_etas.shape[0]
+
+    cdf_values = ((radial_bin_etas > radial_bin_bs_etas).sum(axis=0) / bootstrap_num)
+    greater_than = cdf_values > 1 - bernoulli_alpha / 2
+    less_than = cdf_values < bernoulli_alpha / 2
+    radial_bin_p_values = cdf_values.copy()
+    radial_bin_p_values[greater_than] = 1 - cdf_values[greater_than]
+
+    radial_bin_significances = np.zeros_like(radial_bin_p_values)
+    radial_bin_significances[greater_than] = 1
+    radial_bin_significances[less_than] = -1
+
+    return radial_bin_significances, radial_bin_p_values
+
+def calculate_directional_significance_permutations_generalAPI(
+        radial_bin_bs_etas: np.ndarray,):
+    radial_bin_bs_significances = np.zeros_like(radial_bin_bs_etas, dtype=np.int64)
+    radial_bin_bs_p_values = np.zeros(radial_bin_bs_etas.shape)
+    for i, bs_etas in enumerate(radial_bin_bs_etas):
+        significances, p_values = calculate_directional_significance_generalAPI(
+            bs_etas,
+            radial_bin_bs_etas,
+        )
+        radial_bin_bs_p_values[i] = p_values
+        radial_bin_bs_significances[i] = significances
+    return radial_bin_bs_significances, radial_bin_bs_p_values
+
+def find_clusters_generalAPI(
+        radial_bin_significances,
+        radial_bin_bs_significance,
+        closest_3_position_idcs,
+        sign_radial_bin_threshold: int = 1):
+    bootstrap_num = radial_bin_bs_significance.shape[0]
+    # Trace clusters in original signal
+    _, full_indices, unique_indices = create_clusters(radial_bin_significances > 0,
+                                                      closest_3_position_idcs,
+                                                      sign_radial_bin_threshold)
+    # Trace clusters in bootstrapped signals
+    bs_cluster_full_indices = []
+    bs_cluster_unique_indices = []
+    for bs_idx in range(bootstrap_num):
+        _, bs_full_indices, bs_unique_indices = create_clusters(radial_bin_bs_significance[bs_idx] > 0,
+                                                                closest_3_position_idcs,
+                                                                sign_radial_bin_threshold)
+        bs_cluster_full_indices.append(bs_full_indices)
+        bs_cluster_unique_indices.append(bs_unique_indices)
+
+    return full_indices, unique_indices, bs_cluster_full_indices, bs_cluster_unique_indices
+
+def calculate_cluster_significances_generalAPI(
+        cluster_full_indices,
+        bs_cluster_full_indices,
+        readial_bin_significances,
+        radial_bin_bs_significances,
+        cluster_alpha: float = 0.05):
+
+    radial_bin_significances = (readial_bin_significances > 0).astype(np.float64)
+    radial_bin_bs_significance = (radial_bin_bs_significances > 0).astype(np.float64)
+
+    bootstrap_num = radial_bin_bs_significance.shape[0]
+    # Calculate maximum cluster scores in bootstrapped ETAs
+    bs_max_cluster_scores = np.zeros(bootstrap_num)
+    for bs_idx in range(bootstrap_num):
+        bs_indices = bs_cluster_full_indices[bs_idx]
+        bs_significances = radial_bin_bs_significance[bs_idx]
+
+        _scores = [bs_significances[tuple(_idcs.T)].sum() for _idcs in bs_indices]
+        if len(_scores) > 0:
+            bs_max_cluster_scores[bs_idx] = np.max(_scores)
+        else:
+            bs_max_cluster_scores[bs_idx] = 0
+
+    # Check significance of cluster scores in original ETA
+    original_cluster_scores = np.array(
+        [radial_bin_significances[tuple(_idcs.T)].sum() for _idcs in cluster_full_indices])
+
+    cluster_significances = (original_cluster_scores >= bs_max_cluster_scores[:, None]).sum(
+        axis=0) / bootstrap_num > 1 - cluster_alpha
+
+    cluster_significant_indices = np.where(cluster_significances)[0]
+
+    return original_cluster_scores, bs_max_cluster_scores, cluster_significant_indices
+
+def FE_similarity(F, E):
+    """
+        Calculate similarity between F and E according to the definition in Zhanng et. at. 2022
+        Parameters:
+            E: Estimated receptive field
+            F: Optic flow field fitted to E
+    """
+    return ((np.sum(F*E, axis=1)/
+            (np.linalg.norm(np.clip(E, 0.0000001, 1.), axis=1) *
+             np.linalg.norm(F, axis=1)))
+            .mean())

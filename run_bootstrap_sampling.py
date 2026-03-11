@@ -9,7 +9,7 @@ def main():
     save_path = os.path.join('results', recording_name)
 
     # set flags for saving intermediate results
-    compute_dff=True # False skip recalculating dff
+    compute_dff=False # False skip recalculating dff
 
     # load eyetracking data
     camera = h5py.File(os.path.join(recording_path, 'Camera.hdf5'), 'r')
@@ -59,7 +59,7 @@ def main():
             rec['sample_rate'],
             rec['radial_bin_edges'],
             bootstrap_num=1024,
-            num_workers=12,)
+            num_workers=22,)
 
         # radial bin etas
         q3_rbe_bootstrapped = calculate_radial_bin_bs_etas(
@@ -69,13 +69,14 @@ def main():
             rec['sample_rate'],
             rec['radial_bin_edges'],
             bootstrap_num=1024,
-            num_workers=12,)
+            num_workers=22,)
 
         _path=os.path.join(save_path, 'bootstrapped RBEs',)
         Path(_path).mkdir(parents=True, exist_ok=True)
         np.save(os.path.join(_path, f'neuron_{str(i)}_bsRBE_q1.npy'), q1_rbe_bootstrapped)
-        np.save(os.path.join(_path, f'neuron_{str(i)}_bsRBE_q1.npy'), q3_rbe_bootstrapped)
+        np.save(os.path.join(_path, f'neuron_{str(i)}_bsRBE_q3.npy'), q3_rbe_bootstrapped)
 
+        #break
 
 if __name__ == '__main__':
     main()
