@@ -8,7 +8,7 @@ from datetime import date, datetime
 import os, time, scipy
 import numpy as np
 from tqdm import tqdm
-from main_functions import create_clusters
+from main_functions import create_clusters, project_to_local_2d_vectors
 
 from multiprocessing.shared_memory import SharedMemory
 import concurrent.futures
@@ -136,7 +136,7 @@ def calculate_local_directions_generalAPI(motion_vectors: np.ndarray, bin_edges:
     # norms, ETAs
     return bin_norms, bin_norms.mean(axis=0)
 
-def bootstrap_shm(idx, ang_name, ang_shape, ang_dtype, vel_name, vel_shape, vel_dtype, bins):
+def bootstrap_shm(event_train, ang_name, ang_shape, ang_dtype, vel_name, vel_shape, vel_dtype, bins):
     """
         Worker for one bootstrap repetition used in calculate_reverse_correlations_shm
         in parallel processing. Uses shared memory for optimizing runtime.
@@ -144,10 +144,10 @@ def bootstrap_shm(idx, ang_name, ang_shape, ang_dtype, vel_name, vel_shape, vel_
     """
     # access shared memory
     shm_ang = SharedMemory(name=ang_name)
-    ang = np.ndarray(ang_shape, dtype=ang_dtype, buffer=shm_ang.buf)[idx]
+    ang = np.ndarray(ang_shape, dtype=ang_dtype, buffer=shm_ang.buf)[event_train]
 
     shm_vel = SharedMemory(name=vel_name)
-    vel = np.ndarray(vel_shape, dtype=vel_dtype, buffer=shm_vel.buf)[idx]
+    vel = np.ndarray(vel_shape, dtype=vel_dtype, buffer=shm_vel.buf)[event_train]
 
     # calculate calcium-event-triggered averge (ETA)
     ETA = np.mean(vel[:, :, None] * np.logical_and(bins[:-1] <= ang[:, :, None], ang[:, :, None] <= bins[1:]),
@@ -216,17 +216,17 @@ def calculate_radial_bin_bs_etas(
 
     # calculate permutations
     frame_no = cmn_phases.sum()
-    min_frame_shift = 4 * sample_rate
+    min_frame_shift = 4 * sample_rate # TODO; this was only 2x in original paper
     max_frame_shift = int(frame_no - min_frame_shift)
     frame_shifts = np.random.randint(min_frame_shift, max_frame_shift, size=(bootstrap_num))
     signal_indices = signal_within_cmn_selection.nonzero()[0][:, None]
-    idcs = np.mod(signal_indices + frame_shifts, signal_within_cmn_selection.size).T
+    event_trains = np.mod(signal_indices + frame_shifts, signal_within_cmn_selection.size).T
 
     start_time = time.time() # time parallel computation
     with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as exe:
         futures = [exe.submit(
             bootstrap_shm,
-            idcs[i],
+            event_trains[i],
             ang_shm.name,
             angles.shape,
             angles.dtype,
@@ -246,6 +246,37 @@ def calculate_radial_bin_bs_etas(
     ang_shm.unlink()
     vel_shm.unlink()
     return radial_bin_bs_etas
+
+def calculate_directional_significance_generalAPI(
+        radial_bin_etas,
+        radial_bin_bs_etas,
+        bernoulli_alpha: float = 0.05):
+    bootstrap_num = radial_bin_bs_etas.shape[0]
+
+    cdf_values = ((radial_bin_etas > radial_bin_bs_etas).sum(axis=0) / bootstrap_num)
+    greater_than = cdf_values > 1 - bernoulli_alpha / 2
+    less_than = cdf_values < bernoulli_alpha / 2
+    radial_bin_p_values = cdf_values.copy()
+    radial_bin_p_values[greater_than] = 1 - cdf_values[greater_than]
+
+    radial_bin_significances = np.zeros_like(radial_bin_p_values)
+    radial_bin_significances[greater_than] = 1
+    radial_bin_significances[less_than] = -1
+
+    return radial_bin_significances, radial_bin_p_values
+
+def calculate_directional_significance_permutations_generalAPI(
+        radial_bin_bs_etas: np.ndarray,):
+    radial_bin_bs_significances = np.zeros_like(radial_bin_bs_etas, dtype=np.int64)
+    radial_bin_bs_p_values = np.zeros(radial_bin_bs_etas.shape)
+    for i, bs_etas in enumerate(radial_bin_bs_etas):
+        significances, p_values = calculate_directional_significance_generalAPI(
+            bs_etas,
+            radial_bin_bs_etas,
+        )
+        radial_bin_bs_p_values[i] = p_values
+        radial_bin_bs_significances[i] = significances
+    return radial_bin_bs_significances, radial_bin_bs_p_values
 
 
 def calc_preferred_directions_generalAPI(
@@ -301,37 +332,6 @@ def calc_preferred_directions_generalAPI(
 
     return population_vectors
 
-def calculate_directional_significance_generalAPI(
-        radial_bin_etas,
-        radial_bin_bs_etas,
-        bernoulli_alpha: float = 0.05):
-    bootstrap_num = radial_bin_bs_etas.shape[0]
-
-    cdf_values = ((radial_bin_etas > radial_bin_bs_etas).sum(axis=0) / bootstrap_num)
-    greater_than = cdf_values > 1 - bernoulli_alpha / 2
-    less_than = cdf_values < bernoulli_alpha / 2
-    radial_bin_p_values = cdf_values.copy()
-    radial_bin_p_values[greater_than] = 1 - cdf_values[greater_than]
-
-    radial_bin_significances = np.zeros_like(radial_bin_p_values)
-    radial_bin_significances[greater_than] = 1
-    radial_bin_significances[less_than] = -1
-
-    return radial_bin_significances, radial_bin_p_values
-
-def calculate_directional_significance_permutations_generalAPI(
-        radial_bin_bs_etas: np.ndarray,):
-    radial_bin_bs_significances = np.zeros_like(radial_bin_bs_etas, dtype=np.int64)
-    radial_bin_bs_p_values = np.zeros(radial_bin_bs_etas.shape)
-    for i, bs_etas in enumerate(radial_bin_bs_etas):
-        significances, p_values = calculate_directional_significance_generalAPI(
-            bs_etas,
-            radial_bin_bs_etas,
-        )
-        radial_bin_bs_p_values[i] = p_values
-        radial_bin_bs_significances[i] = significances
-    return radial_bin_bs_significances, radial_bin_bs_p_values
-
 def find_clusters_generalAPI(
         radial_bin_significances,
         radial_bin_bs_significance,
@@ -360,6 +360,20 @@ def calculate_cluster_significances_generalAPI(
         readial_bin_significances,
         radial_bin_bs_significances,
         cluster_alpha: float = 0.05):
+    """
+        Calculate 2nd order cluster statistic based on bootstrapped cluster sized
+        and then select significant clusters in original data based on their
+        empirical pvalue from that statistic.
+        Parameters:
+            cluster_full_indices, bs_cluster_full_indices:: list of np.arrays
+                each array in the list represents the indices of one cluster in original data
+                in 2D coordinates. len of list is (n_clusters), shape of each array is
+                (cluster_size x 2D)
+            bs_cluster_full_indices, bs_cluster_unique_indices:: list of lists of np.arrays
+                nested list of cluster_full_indices for each bootsrapping.
+
+
+    """
 
     radial_bin_significances = (readial_bin_significances > 0).astype(np.float64)
     radial_bin_bs_significance = (radial_bin_bs_significances > 0).astype(np.float64)
@@ -399,3 +413,87 @@ def FE_similarity(F, E):
             (np.linalg.norm(np.clip(E, 0.0000001, 1.), axis=1) *
              np.linalg.norm(F, axis=1)))
             .mean())
+
+
+def tof(angle_azimuth: float, angle_elevation: float, P: np.ndarray):
+    """
+        Translational optic flow field.
+        Returns a translational optic flow field for a given translation axis.
+
+        Parameters:
+            angle_azimuth (float):
+                angle in radians of the azimuth of the translation axis.
+            angle_elevation (float):
+                angle in radians of the elevation of the translation axis.
+            P (np.array):
+                3D positions to sample flow field at.
+
+        Returns:
+            F (np.array):
+                Return values of optic flow field (3D vector) at each point
+                given in positions.
+            FoC, FoE (np.array):
+                Focus of Expansion and Focus of Contraction of the optic flow field.
+                Given as 3D unit vector.
+    """
+    from numpy import sin, cos
+    axis, a, b = np.array([1,0,0]), angle_azimuth, angle_elevation
+    # yaw and pitch rotation matrices
+    yaw=np.array([[cos(a),-sin(a),0],[sin(a), cos(a), 0],[0,0,1]])
+    pitch=np.array([[cos(b), 0, sin(b)],[0,1,0],[-sin(b), 0, cos(b)]])
+    T=axis @ yaw @ pitch
+    return T - np.dot(P, T)[:,None] * P
+
+def rof(angle_azimuth: float, angle_elevation: float, P: np.ndarray):
+    """
+        Rotational optic flow field.
+        Returns a rotation optic flow field for a given translation axis.
+
+        Parameters:
+            angle_azimuth (float):
+                angle in radians of the azimuth of the rotation axis.
+            angle_elevation (float):
+                angle in radians of the elevation of the rotation axis.
+            P (np.array):
+                3D positions to sample flow field at.
+
+        Returns:
+            F (np.array):
+                Return values of optic flow field (3D vector) at each point
+                given in positions.
+            FoC, FoE (np.array):
+                Focus of Expansion and Focus of Contraction of the optic flow field.
+                Given as 3D unit vector.
+    """
+    from numpy import sin, cos
+    axis, a, b = np.array([1,0,0]), angle_azimuth, angle_elevation
+    # yaw and pitch rotation matrices
+    yaw=np.array([[cos(a),-sin(a),0],[sin(a), cos(a), 0],[0,0,1]])
+    pitch=np.array([[cos(b), 0, sin(b)],[0,1,0],[-sin(b), 0, cos(b)]])
+    return -np.cross(P, axis @ yaw @ pitch)
+
+def RSSangle(F, E):
+    """
+        Calculate RSS (residual sum of squared) of angles between two vector fields.
+        Used in this analysis to calculate RSS between estimated RF and optic flow field,
+        as an error function to fit the latter to the former.
+        Parameters:
+            F (np.array):
+                Optic flow field to fit.
+            E (np.array):
+                Estimated RF.
+        Returns:
+            RSS (float)
+    """
+    #print(E)
+    coeffcients = np.sum(F*E, axis=1)/ (np.linalg.norm(np.clip(E, 0.0000001, 1.), axis=1)* np.linalg.norm(F, axis=1))
+    angles = np.arccos(np.clip(coeffcients, -1.0, 1.0))
+    return np.sum(angles**2)
+
+def RSSangle_Fto2D(F, E, pos):
+    """
+        Wraps around def RSSangle(F, E) to transform F from 3D to 2D,
+        for convenience in using it with scipy.optimize.minimize
+    """
+    F=project_to_local_2d_vectors(pos, F[None,:,:]).squeeze()
+    return RSSangle(F, E)
