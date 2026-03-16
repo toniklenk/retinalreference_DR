@@ -90,9 +90,12 @@ def generate_eyepos_masks(
             q3_max_left, q3_max_right: float
                 threshold for left and right eye to be on the other side.
     """
+
     eye_pos = np.column_stack((
         np.array(eyepos_left).squeeze(),
         np.array(eyepos_right).squeeze()))
+
+    # eye_pos = (eye_pos - eye_pos.mean(axis=0)) / eye_pos.std(axis=0)
 
     eye_pos_resampled = scipy.interpolate.interp1d(
         np.array(eyepos_time).squeeze(),

@@ -50,11 +50,8 @@ def plot_v1(E1, E3, F1, F3, positions, save_path_=None, neuron_num=None, alpha_E
 
     if save_path_ is not None and neuron_num is not None:
         png_path = os.path.join(save_path_, 'png')
-        pdf_path = os.path.join(save_path_, 'pdf')
         Path(png_path).mkdir(parents=True, exist_ok=True)
-        Path(pdf_path).mkdir(parents=True, exist_ok=True)
-        fig.savefig(os.path.join(png_path, f'{neuron_num}.png'), dpi=300)
-        # fig.savefig(os.path.join(pdf_path, f'{neuron_num}.pdf'), dpi=300)
+        fig.savefig(os.path.join(png_path, f'both2D_{neuron_num}.png'), dpi=300)
     plt.close()
 
 def plot_rf_overview_generalAPI(
@@ -129,10 +126,22 @@ def plot_eyepositions(
     """
         Scatterplot of eye positions to visualize quadrants for subselecting data.
     """
-    plt.figure(figsize=(20,20))
-    plt.scatter(eyepos[:,0], eyepos[:,1], s=1., alpha=0.6)
-    plt.xlabel('left')
-    plt.ylabel('right')
+    fig, ax = plt.subplots(figsize=(20,20))
+
+    q1 = np.logical_and(
+        eyepos[:, 0] > q1_min_left,
+        eyepos[:, 1] > q1_min_right)
+    q3 = np.logical_and(
+        eyepos[:, 0] < q3_max_left,
+        eyepos[:, 1] < q3_max_right)
+    out = np.logical_not(q1 | q3)
+
+    ax.scatter(eyepos[q1,0], eyepos[q1,1], s=1., alpha=0.6, color='red')
+    ax.scatter(eyepos[q3,0], eyepos[q3,1], s=1., alpha=0.6, color='blue')
+    ax.scatter(eyepos[out,0], eyepos[out,1], s=1., alpha=0.6, color='grey')
+    ax.set_xlabel('right eye position (no unit, normalized)', fontsize=20, color='black')
+    ax.set_ylabel('left eye position (no unit, normalized)', fontsize=20, color='black')
+    ax.tick_params(axis='both', which='major', labelsize=16, color='black')
 
     # 1st quadrant (defined by lower boundaries)
     plt.hlines((q1_min_right, q1_min_right+q1_height),q1_min_left, q1_min_left+q1_width)
@@ -141,3 +150,5 @@ def plot_eyepositions(
     # 3rd quadrant (define by upper boundaries)
     plt.hlines((q3_max_right, q3_max_right-q3_height), q3_max_left-q3_widht, q3_max_left)
     plt.vlines((q3_max_left, q3_max_left-q3_widht), q3_max_right-q3_height, q3_max_right)
+
+    return q1, q3, out

@@ -4,7 +4,14 @@ from main_functions_generalAPI import *
 
 
 def main():
+    # recording_name = '2026-03-04_mb_fish8_rec2'
     recording_name = '2026-03-04_mb_fish8_rec2'
+    plane = 0
+    imaging_rate = 1.9988 # fish1_rec2
+    params=(.1,.1,-.1,-.1) # fish1_rec2
+
+
+
     recording_path = os.path.join('data', recording_name)
     save_path = os.path.join('results', recording_name)
 
@@ -26,7 +33,6 @@ def main():
                 rec['time_resampled'])
 
     # Eye tracking
-    params=(10,-5, 6, -12) # parameters_fish1_rec2
     q1_mask, q3_mask=generate_eyepos_masks(
         camera['eyepos_ang_le_pos_0'],
         camera['eyepos_ang_re_pos_0'],

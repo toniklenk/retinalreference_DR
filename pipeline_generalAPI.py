@@ -1,36 +1,48 @@
-import pickle
+import os, h5py, pickle, time, matplotlib
+import numpy as np
+import matplotlib.pyplot as plt
+
+from scipy.optimize import minimize
+from scipy.interpolate import interp1d
+
 from main_functions import *
-from main_functions_generalAPI import calculate_local_directions_generalAPI, generate_eyepos_masks, \
-    calc_preferred_directions_generalAPI
+from main_functions_generalAPI import *
 from plotting_functions import *
+from plotting_functions_generalAPI import *
 
 def main():
-    recording_path = os.path.join('data','2026-02-25_mb_fish1_rec2')
-    save_path = os.path.join('results','2026-02-25_mb_fish1_rec2_run2')
+    # manually defined Parameters!!!==============
+    recording_name='2026-02-25_mb_fish1_rec2'
+    plane = 0
+    imaging_rate = 1.9988 # fish1_rec2
+    # imaging_rate = 1.9957 # fish8_rec2
+    params=(.1,.1,-.1,-.1) # fish1_rec2
+    params=(.1,.1,-.1,-.1) # fish8_rec2
+    compute_dff = False  # False skip recalculating dff
+    # recording_name = '2026-03-04_mb_fish8_rec2'
+    # ============================================
 
-    # set flags for saving intermediate results
-    save_results=False
-    save_etas=True
-    compute_dff=False # False skip recalculating dff
-
-    # load eyetracking data
+    recording_path = os.path.join('data', recording_name)
+    save_path = os.path.join('results', recording_name, 'plane' + str(plane))
     camera = h5py.File(os.path.join(recording_path, 'Camera.hdf5'), 'r')
-    fluorescence, rec, phase, ca_rec_group_id_fun = digest_folder(recording_path, plane=0)
+    fluorescence, rec, phase, ca_rec_group_id_fun =(
+        digest_folder(recording_path, imaging_rate=imaging_rate, plane=plane))
 
-    # modifies recording object directly
     # add resampled CMN data to resampled time domain for each phase
     # (info: time domain is resampled from ~2.1Hz to 10Hz in digest_folder())
     process_recording(rec, phase, radial_bin_num=16)
-    if  compute_dff:
-        dff_original, dff_resampled = calculate_dff_vectorized(rec, fluorescence, rec['imaging_rate'])
-        np.save(os.path.join(save_path, "deconvolved_Dff_original_fast.npy"), dff_original)
+    if compute_dff:
+        dff_original, dff_resampled =(
+            calculate_dff_vectorized(rec, fluorescence, rec['imaging_rate']))
+        Path(save_path).mkdir(parents=True, exist_ok=True)
+        np.save(os.path.join(save_path, "dff_original.npy"), dff_original)
     else:
-        dff_original = np.load(os.path.join(save_path, "deconvolved_Dff_original.npy"))
-        dff_resampled = scipy.interpolate.interp1d(rec['ca_times'], dff_original, kind='nearest')(
-                rec['time_resampled'])
+        dff_original = np.load(os.path.join(save_path, "dff_original.npy"))
+        dff_resampled = (
+            scipy.interpolate.interp1d(rec['ca_times'], dff_original, kind='nearest')(
+                rec['time_resampled']))
 
-    # Eye tracking
-    params=(10,-5, 6, -12) # parameters_fish1_rec2
+    # Eye tracking ---
     q1_mask, q3_mask=generate_eyepos_masks(
         camera['eyepos_ang_le_pos_0'],
         camera['eyepos_ang_re_pos_0'],
@@ -40,104 +52,168 @@ def main():
         q1_min_right = params[1],
         q3_max_left = params[2],
         q3_max_right = params[3])
+    # ------
 
-    n_neurons=dff_resampled.shape[0]
-    # iterated individual neurons, draws receptive field of each neuron to .png and .pdf
-    for i in tqdm(range(n_neurons)):
-        # determine calcium events
-        # do this before subselecting data with eye positions to avoid jumps in the first derivative
-        rec['signal_selection'], rec['signal_length'], rec['signal_proportion'], rec['signal_dff_mean']\
-            =detect_events_with_derivative(
-            rec['signal_selection'],
-            dff_resampled[i, :],
+    n_neurons = dff_resampled.shape[0]
+    E_list_q1, E_list_q3 = [], []
+    F_list_q1, F_list_q3 = [], []
+    FoC_list_q1, FoC_list_q3 = [], []
+    FE1_sim_list, FE3_sim_list = [], []
+
+    # for i in tqdm(np.arange(start=0, stop=n_neurons)):
+    for i in tqdm([6, 7, 8]):
+        # load bootstrapped etas
+        # _path = os.path.join(save_path, 'bootstrapped RBEs', )
+        # q1_rbe_bootstrapped = np.load(os.path.join(_path, f'neuron_{str(i)}_bsRBE_q1.npy'))
+        # q3_rbe_bootstrapped = np.load(os.path.join(_path, f'neuron_{str(i)}_bsRBE_q3.npy'))
+
+        # calcium events
+        rec['signal_selection'], rec['signal_length'], rec['signal_proportion'], rec['signal_dff_mean'] \
+            = detect_events_with_derivative_generalAPI(
+            rec['cmn_phase_selection'],
+            dff_resampled[i],
             rec['sample_rate'])
 
-        # calculate calcium event triggered averages (of CMN motion vectors), without bootstrapping
-        # 1. based on data from all eye positions
-        radial_bin_norms, radial_bin_etas = calculate_local_directions_generalAPI(
-            rec['cmn_motion_vectors_2d'][rec['signal_selection'], :, :],
-            rec['radial_bin_edges'])
-        #rec['radial_bin_norms'], rec['radial_bin_etas']=radial_bin_norms, radial_bin_etas
-
-        # 2. based on data from one side/quadrant of eye positions
+        # ETAse
         radial_bin_norms_q1, radial_bin_etas_q1 = calculate_local_directions_generalAPI(
             rec['cmn_motion_vectors_2d'][rec['signal_selection'] & q1_mask, :, :],
             rec['radial_bin_edges'])
-
-        # 3. based on data from other side/quadrant of eye positios
         radial_bin_norms_q3, radial_bin_etas_q3 = calculate_local_directions_generalAPI(
             rec['cmn_motion_vectors_2d'][rec['signal_selection'] & q3_mask, :, :],
             rec['radial_bin_edges'])
 
+        # bootstrapped ETAs
+        q1_rbe_bootstrapped = calculate_radial_bin_bs_etas(
+            rec['cmn_motion_vectors_2d'][q1_mask],
+            rec['signal_selection'][q1_mask],
+            rec['cmn_phase_selection'][q1_mask],
+            rec['sample_rate'],
+            rec['radial_bin_edges'],
+            bootstrap_num=1024,
+            num_workers=22,)
+        q3_rbe_bootstrapped = calculate_radial_bin_bs_etas(
+            rec['cmn_motion_vectors_2d'][q3_mask],
+            rec['signal_selection'][q3_mask],
+            rec['cmn_phase_selection'][q3_mask],
+            rec['sample_rate'],
+            rec['radial_bin_edges'],
+            bootstrap_num=1024,
+            num_workers=22,)
+        # save bootstrapped ETAs
+        _path=os.path.join(save_path, 'bootstrapped RBEs',)
+        Path(_path).mkdir(parents=True, exist_ok=True)
+        np.save(os.path.join(_path, f'neuron_{str(i)}_bsRBE_q1.npy'), q1_rbe_bootstrapped)
+        np.save(os.path.join(_path, f'neuron_{str(i)}_bsRBE_q3.npy'), q3_rbe_bootstrapped)
 
 
+        # bin significances, based on bootstrapped etas
+        significances_q1, pvalues_q1 = calculate_directional_significance_generalAPI(
+            radial_bin_etas_q1,
+            q1_rbe_bootstrapped,
+            bernoulli_alpha=.05 / (320 * 16))
+        significances_q3, pvalues_q3 = calculate_directional_significance_generalAPI(
+            radial_bin_etas_q3,
+            q3_rbe_bootstrapped,
+            bernoulli_alpha=.05 / (320 * 16))
 
-        # STEP 1 of 2-step bootstrap test
-        # Calcium-event-triggered-averages calculation
-        # calculate bootstrapping distribution of ETAs in each spatial position and direction bin
-        calculate_reverse_correlations_shm(rec, bootstrap_num=1024)
-        # calculate p-values for both true and bootstrapped ETAs
-        calculate_directional_significance(rec)
-
-
-        # STEP 2 of 2-step bootstrap test
-        # find clusters in original and bootstrapped etas p-values (these represent the first order statistic)
-        find_clusters(rec)
-        # calculate the second order statistics for the original/true cluster sizes
-        # from the distribution of the cluster sizes in the bootstrapped values
-        calculate_cluster_significances(rec)
-
-        if save_results:
-            path=os.path.join(recording_path, 'recording_dicts',)
-            Path(path).mkdir(parents=True, exist_ok=True) # create dir if needed
-            with open(os.path.join(path, f'recording_neuron{str(i)}.pkl'),'wb') as f:
-                pickle.dump(rec, f)
-
-        # estimate neurons RFs (RF: 'preferred_vectors')
-        # weighted sum of ETAs of SIGNIFICANT radial bins in each spatial path of the visual field
-        # this is needed for plotting to work
-        # calculate_directional_preference(rec)
-        RF_est=calc_preferred_directions_generalAPI(
-            radial_bin_etas,
-            rec['radial_bin_significances'] > 0,
+        # RFs estimates (cluster statistics are not used in this)
+        E1 = calc_preferred_directions_generalAPI(
+            radial_bin_etas_q1,
+            significances_q1 > 0,
+            rec['radial_bin_centers'])
+        E3 = calc_preferred_directions_generalAPI(
+            radial_bin_etas_q3,
+            significances_q3 > 0,
             rec['radial_bin_centers'])
 
-        RF_est=calc_preferred_directions_generalAPI(
-            radial_bin_etas,
-            rec['radial_bin_significances'] > 0,
-            rec['radial_bin_centers'])
+        # bin significances for bootstrapped data, based on bootstrapped etas
+        significances_bs_q1, pvalues_bs_q1 = calculate_directional_significance_permutations_generalAPI(
+            q1_rbe_bootstrapped)
+        significances_bs_q3, pvalues_bs_q3 = calculate_directional_significance_permutations_generalAPI(
+            q3_rbe_bootstrapped)
 
-        RF_est=calc_preferred_directions_generalAPI(
-            radial_bin_etas,
-            rec['radial_bin_significances'] > 0,
-            rec['radial_bin_centers'])
+        # find clusters
+        full_indices_q1, unique_indices_q1, bs_cluster_full_indices_q1, bs_cluster_unique_indices_q1 = find_clusters_generalAPI(
+            significances_q1,
+            significances_bs_q1,
+            rec['closest_3_position_indices'], )
+        full_indices_q3, unique_indices_q3, bs_cluster_full_indices_q3, bs_cluster_unique_indices_q3 = find_clusters_generalAPI(
+            significances_q3,
+            significances_bs_q3,
+            rec['closest_3_position_indices'], )
 
+        # calculate cluster statistics
+        original_cluster_scores_q1, bs_max_cluster_scores_q1, cluster_significant_indices_q1 = calculate_cluster_significances_generalAPI(
+            full_indices_q1,
+            bs_cluster_full_indices_q1,
+            significances_q1,
+            significances_bs_q1)
+        # calculate cluster statistics
+        original_cluster_scores_q3, bs_max_cluster_scores_q3, cluster_significant_indices_q3 = calculate_cluster_significances_generalAPI(
+            full_indices_q3,
+            bs_cluster_full_indices_q3,
+            significances_q3,
+            significances_bs_q3)
 
-        rec['preferred_vectors']=RF_est
+        plot_rf_overview_generalAPI(
+            radial_bin_etas_q1,
+            rec['radial_bin_edges'],
+            significances_q1,
+            rec['positions'],
+            rec['patch_corners'],
+            rec['patch_indices'],
+            cluster_significant_indices_q1,
+            E1,
+            unique_indices_q1,
+            i, save_path=save_path, q=1)
 
-        # fit optic flow fields
-        # to estimated RF from all data
+        plot_rf_overview_generalAPI(
+            radial_bin_etas_q3,
+            rec['radial_bin_edges'],
+            significances_q3,
+            rec['positions'],
+            rec['patch_corners'],
+            rec['patch_indices'],
+            cluster_significant_indices_q3,
+            E3,
+            unique_indices_q3,
+            i, save_path=save_path, q=3)
 
+        # fit E (translational/ rotational optic flow field)
+        mini_F1=minimize(
+            lambda angles: RSSangle_Fto2D(tof(*angles, rec['positions']),E1,rec['positions']),
+            [0., 0.],)
+        mini_F3=minimize(
+            lambda angles: RSSangle_Fto2D(tof(*angles, rec['positions']), E3, rec['positions']),
+            [0., 0.],)
+        # calculate fitted optic flow field F from optimal parameters
+        F1_3D=tof(*mini_F1.x, rec['positions'])[None,:,:]
+        F1=project_to_local_2d_vectors(rec['positions'], F1_3D).squeeze()
+        F3_3D=tof(*mini_F3.x, rec['positions'])[None,:,:]
+        F3=project_to_local_2d_vectors(rec['positions'], F3_3D).squeeze()
 
-        # to estimated RF from first quadrant data
+        E_list_q1.append(E1); F_list_q1.append(F1)
+        FoC_list_q1.append(mini_F1.x); FoC_list_q3.append(mini_F3.x)
+        E_list_q3.append(E3); F_list_q3.append(F3)
+        # FE1_sim_list.append(FE_similarity(F1, E1))
+        # FE3_sim_list.append(FE_similarity(F3, E3))
 
-        # to estimated RF from third quadrant data
+        plot_v1(
+            E1, E3,
+            F1, F3,
+            rec['positions'],
+            alpha_E=.9, alpha_F=.55,
+            save_path_=save_path,
+            neuron_num=i)
 
-        # later: only to motion vectors from significant patches.
+    FoC_array_q1=np.concatenate([FoC[:,None].T for FoC in FoC_list_q1])
+    FoC_array_q3=np.concatenate([FoC[:,None].T for FoC in FoC_list_q3])
+    FoC_path = os.path.join(save_path, 'FoCs')
+    Path(FoC_path).mkdir(parents=True, exist_ok=True)
+    np.save(os.path.join(FoC_path, f'FoCq1'), FoC_array_q1)
+    np.save(os.path.join(FoC_path, f'FoCq3'), FoC_array_q3)
 
-        # calculate difference between Focus of Contraction
-
-        # statistical testing of difference between Focus of Contraction: 1-step nonparametric permutation test
-        # permutation distribution: random shifting of eye positions in relation to motion vectors.
-        # calculate distance
-
-        # create directories if needed
-        Path(os.path.join(save_path, 'pdf')).mkdir(parents=True, exist_ok=True)
-        Path(os.path.join(save_path, 'png')).mkdir(parents=True, exist_ok=True)
-        plot_rf_overview(rec, i, save_path)
-
-
-        print(1)
+    print('pipeline ran sucessfully')
 
 if __name__ == '__main__':
     main()
