@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Tuple
 
-def find_clusters_generalAPI(
+def find_clusters(
         radial_bin_significances,
         radial_bin_bs_significance,
         closest_3_position_idcs,
@@ -23,12 +23,13 @@ def find_clusters_generalAPI(
 
     return full_indices, unique_indices, bs_cluster_full_indices, bs_cluster_unique_indices
 
-def trace_cluster(current_patch_idx: int,
-                  significant_bins: np.ndarray[bool],
-                  closest_indices: np.ndarray[int],
-                  sign_radial_bin_threshold: int,
-                  cluster_map: np.ndarray[bool],
-                  visited_patch_indices: List[int]):
+def trace_cluster(
+        current_patch_idx: int,
+        significant_bins: np.ndarray[bool],
+        closest_indices: np.ndarray[int],
+        sign_radial_bin_threshold: int,
+        cluster_map: np.ndarray[bool],
+        visited_patch_indices: List[int]):
     """Recursively go through all spatially connected patches
     which share the same significant direction bins
     """
@@ -67,9 +68,11 @@ def trace_cluster(current_patch_idx: int,
                       cluster_map,
                       visited_patch_indices)
 
-def create_clusters(significant_bins: np.ndarray[bool],
-                    closest_indices: np.ndarray[int],
-                    sign_radial_bin_threshold: int) -> Tuple[np.ndarray, list, list]:
+def create_clusters(
+        significant_bins: np.ndarray[bool],
+        closest_indices: np.ndarray[int],
+        sign_radial_bin_threshold: int
+) -> Tuple[np.ndarray, list, list]:
     """
     significant_bins: bool array with shape (patches x radial bins)
     closest_indices: int array with shape (patches x 3) containing indices of the three closest patches for each patch
@@ -104,7 +107,7 @@ def create_clusters(significant_bins: np.ndarray[bool],
 
     return cluster_maps, cluster_indices, unique_patch_indices
 
-def calculate_cluster_significances_generalAPI(
+def calc_cluster_signif(
         cluster_full_indices,
         bs_cluster_full_indices,
         radial_bin_significances,

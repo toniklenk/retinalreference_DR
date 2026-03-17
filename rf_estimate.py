@@ -4,7 +4,10 @@ from typing import Tuple, List
 from multiprocessing.shared_memory import SharedMemory
 import concurrent.futures
 
-def calculate_local_directions_generalAPI(motion_vectors: np.ndarray, bin_edges: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def calc_etas(
+        motion_vectors: np.ndarray,
+        bin_edges: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
     """
         Calculate calcium-event-triggered averages (ETA), as described in Zhang Y., Huang R., et. at (2022).
         Motion velocities are binned in to n (default=16) bins by their corresponding motion angles,
@@ -29,7 +32,11 @@ def calculate_local_directions_generalAPI(motion_vectors: np.ndarray, bin_edges:
     # norms, ETAs
     return bin_norms, bin_norms.mean(axis=0)
 
-def bootstrap_shm(event_train, ang_name, ang_shape, ang_dtype, vel_name, vel_shape, vel_dtype, bins):
+def _calc_etas_bs_worker(
+        event_train,
+        ang_name, ang_shape, ang_dtype,
+        vel_name, vel_shape, vel_dtype,
+        bins):
     """
         Worker for one bootstrap repetition used in calculate_radial_bin_bs_etas
         in parallel processing. Uses shared memory for optimizing runtime.
@@ -50,15 +57,14 @@ def bootstrap_shm(event_train, ang_name, ang_shape, ang_dtype, vel_name, vel_sha
     shm_vel.close()
     return ETA
 
-def calculate_radial_bin_bs_etas(
+def calc_etas_bs(
         motion_vectors: np.ndarray,
         signal: np.ndarray,
         cmn_phases,
         sample_rate,
         radial_bin_edges,
         bootstrap_num: int = 1024,
-        num_workers: int = 12
-):
+        num_workers: int = 12):
     """
         Calculate bootstrapped distribution of calcium event triggered averages (ETA's).
         - precompute all angles and velocities once
@@ -118,7 +124,7 @@ def calculate_radial_bin_bs_etas(
     start_time = time.time() # time parallel computation
     with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as exe:
         futures = [exe.submit(
-            bootstrap_shm,
+            _calc_etas_bs_worker,
             event_trains[i],
             ang_shm.name,
             angles.shape,
@@ -140,7 +146,7 @@ def calculate_radial_bin_bs_etas(
     vel_shm.unlink()
     return radial_bin_bs_etas
 
-def calculate_directional_significance_generalAPI(
+def calc_perm_statistic(
         radial_bin_etas,
         radial_bin_bs_etas,
         bernoulli_alpha: float = 0.05):
@@ -158,12 +164,12 @@ def calculate_directional_significance_generalAPI(
 
     return radial_bin_significances, radial_bin_p_values
 
-def calculate_directional_significance_permutations_generalAPI(
+def calc_perm_statistic_bs(
         radial_bin_bs_etas: np.ndarray,):
     radial_bin_bs_significances = np.zeros_like(radial_bin_bs_etas, dtype=np.int64)
     radial_bin_bs_p_values = np.zeros(radial_bin_bs_etas.shape)
     for i, bs_etas in enumerate(radial_bin_bs_etas):
-        significances, p_values = calculate_directional_significance_generalAPI(
+        significances, p_values = calc_perm_statistic(
             bs_etas,
             radial_bin_bs_etas,
         )
@@ -171,10 +177,11 @@ def calculate_directional_significance_permutations_generalAPI(
         radial_bin_bs_significances[i] = significances
     return radial_bin_bs_significances, radial_bin_bs_p_values
 
-def calc_preferred_directions_generalAPI(
+def estimate_rf(
         bin_etas: np.ndarray,
         bin_significances: np.ndarray,
-        bin_centers: np.ndarray) -> np.ndarray:
+        bin_centers: np.ndarray
+) -> np.ndarray:
     """
         Calculate estimated RF.
         Calculates preferred direction of each radial patch/bin as weighted sum of significant directions.

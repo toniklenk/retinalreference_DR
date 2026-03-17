@@ -7,7 +7,12 @@ import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
 
-def calculate_dff_vectorized(recording, fluorescences, imaging_rate, window_size: int = 120, percentile: int = 10):
+def calc_dff(
+        recording,
+        fluorescences,
+        imaging_rate,
+        window_size: int = 120,
+        percentile: int = 10):
     """
         Vectorized version of calculate_dff.
     """
@@ -38,7 +43,7 @@ def calculate_dff_vectorized(recording, fluorescences, imaging_rate, window_size
     recording['Dff_resampled'] = Dff_resampled
     return Dff_all, Dff_resampled
 
-def detect_events_with_derivative_generalAPI(
+def detect_events(
         cmn_selection, # timepoints with CMN stimulus
         dff,
         sample_rate,
@@ -90,7 +95,10 @@ def detect_events_with_derivative_generalAPI(
     return signal_selection, sum(signal_selection), sum(signal_selection)/sum(cmn_selection), np.mean(dff[signal_selection])
 
 
-def project_to_local_2d_vectors(normals: np.ndarray, vectors: np.ndarray) -> np.ndarray:
+def project_to_local_2d_vectors(
+        normals: np.ndarray,
+        vectors: np.ndarray
+) -> np.ndarray:
     """
         Parameters:
                 normals: np.array
@@ -132,7 +140,10 @@ def FE_similarity(F, E):
              np.linalg.norm(F, axis=1)))
             .mean())
 
-def tof(angle_azimuth: float, angle_elevation: float, P: np.ndarray):
+def tof(
+        angle_azimuth: float,
+        angle_elevation: float,
+        P: np.ndarray):
     """
         Translational optic flow field.
         Returns a translational optic flow field for a given translation axis.
@@ -161,7 +172,10 @@ def tof(angle_azimuth: float, angle_elevation: float, P: np.ndarray):
     T=axis @ yaw @ pitch
     return T - np.dot(P, T)[:,None] * P
 
-def rof(angle_azimuth: float, angle_elevation: float, P: np.ndarray):
+def rof(
+        angle_azimuth: float,
+        angle_elevation: float,
+        P: np.ndarray):
     """
         Rotational optic flow field.
         Returns a rotation optic flow field for a given translation axis.

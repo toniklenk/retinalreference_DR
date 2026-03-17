@@ -60,7 +60,7 @@ def main():
             dff_original,
             kind='nearest')(rec['time_resampled']))
     else:
-        dff_original, dff_resampled = calculate_dff_vectorized(
+        dff_original, dff_resampled = calc_dff(
             rec,
             fluorescence,
             rec['imaging_rate'])
@@ -95,7 +95,7 @@ def main():
     for i in tqdm(selected_neurons):
         # calcium events
         rec['signal_selection'], rec['signal_length'], rec['signal_proportion'], rec['signal_dff_mean'] \
-            = detect_events_with_derivative_generalAPI(
+            = detect_events(
             rec['cmn_phase_selection'],
             dff_resampled[i],
             rec['sample_rate'])
@@ -108,7 +108,7 @@ def main():
             q3_rbe_bootstrapped = np.load(join(_path, f'neuron_{str(i)}_bsRBE_q3.npy'))
         else:
             # calculate
-            q1_rbe_bootstrapped = calculate_radial_bin_bs_etas(
+            q1_rbe_bootstrapped = calc_etas_bs(
                 rec['cmn_motion_vectors_2d'][q1_mask],
                 rec['signal_selection'][q1_mask],
                 rec['cmn_phase_selection'][q1_mask],
@@ -116,7 +116,7 @@ def main():
                 rec['radial_bin_edges'],
                 bootstrap_num=1024,
                 num_workers=22,)
-            q3_rbe_bootstrapped = calculate_radial_bin_bs_etas(
+            q3_rbe_bootstrapped = calc_etas_bs(
                 rec['cmn_motion_vectors_2d'][q3_mask],
                 rec['signal_selection'][q3_mask],
                 rec['cmn_phase_selection'][q3_mask],
@@ -134,57 +134,57 @@ def main():
             continue
 
         # ETAs
-        radial_bin_norms_q1, radial_bin_etas_q1 = calculate_local_directions_generalAPI(
+        radial_bin_norms_q1, radial_bin_etas_q1 = calc_etas(
             rec['cmn_motion_vectors_2d'][rec['signal_selection'] & q1_mask, :, :],
             rec['radial_bin_edges'])
-        radial_bin_norms_q3, radial_bin_etas_q3 = calculate_local_directions_generalAPI(
+        radial_bin_norms_q3, radial_bin_etas_q3 = calc_etas(
             rec['cmn_motion_vectors_2d'][rec['signal_selection'] & q3_mask, :, :],
             rec['radial_bin_edges'])
 
         # bin significances
-        significances_q1, pvalues_q1 = calculate_directional_significance_generalAPI(
+        significances_q1, pvalues_q1 = calc_perm_statistic(
             radial_bin_etas_q1,
             q1_rbe_bootstrapped,
             bernoulli_alpha=.05 / (320 * 16))
-        significances_q3, pvalues_q3 = calculate_directional_significance_generalAPI(
+        significances_q3, pvalues_q3 = calc_perm_statistic(
             radial_bin_etas_q3,
             q3_rbe_bootstrapped,
             bernoulli_alpha=.05 / (320 * 16))
 
         # RFs estimates (clusters not used)
-        E1 = calc_preferred_directions_generalAPI(
+        E1 = estimate_rf(
             radial_bin_etas_q1,
             significances_q1 > 0,
             rec['radial_bin_centers'])
-        E3 = calc_preferred_directions_generalAPI(
+        E3 = estimate_rf(
             radial_bin_etas_q3,
             significances_q3 > 0,
             rec['radial_bin_centers'])
 
         # bin significances for bootstrapped ETAs
-        significances_bs_q1, pvalues_bs_q1 = calculate_directional_significance_permutations_generalAPI(
+        significances_bs_q1, pvalues_bs_q1 = calc_perm_statistic_bs(
             q1_rbe_bootstrapped)
-        significances_bs_q3, pvalues_bs_q3 = calculate_directional_significance_permutations_generalAPI(
+        significances_bs_q3, pvalues_bs_q3 = calc_perm_statistic_bs(
             q3_rbe_bootstrapped)
 
         # find clusters
-        full_indices_q1, unique_indices_q1, bs_cluster_full_indices_q1, bs_cluster_unique_indices_q1 = find_clusters_generalAPI(
+        full_indices_q1, unique_indices_q1, bs_cluster_full_indices_q1, bs_cluster_unique_indices_q1 = find_clusters(
             significances_q1,
             significances_bs_q1,
             rec['closest_3_position_indices'], )
-        full_indices_q3, unique_indices_q3, bs_cluster_full_indices_q3, bs_cluster_unique_indices_q3 = find_clusters_generalAPI(
+        full_indices_q3, unique_indices_q3, bs_cluster_full_indices_q3, bs_cluster_unique_indices_q3 = find_clusters(
             significances_q3,
             significances_bs_q3,
             rec['closest_3_position_indices'], )
 
         # cluster statistics Q1
-        original_cluster_scores_q1, bs_max_cluster_scores_q1, cluster_significant_indices_q1 = calculate_cluster_significances_generalAPI(
+        original_cluster_scores_q1, bs_max_cluster_scores_q1, cluster_significant_indices_q1 = calc_cluster_signif(
             full_indices_q1,
             bs_cluster_full_indices_q1,
             significances_q1,
             significances_bs_q1)
         # cluster statistics Q3
-        original_cluster_scores_q3, bs_max_cluster_scores_q3, cluster_significant_indices_q3 = calculate_cluster_significances_generalAPI(
+        original_cluster_scores_q3, bs_max_cluster_scores_q3, cluster_significant_indices_q3 = calc_cluster_signif(
             full_indices_q3,
             bs_cluster_full_indices_q3,
             significances_q3,

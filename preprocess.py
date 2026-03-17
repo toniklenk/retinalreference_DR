@@ -21,7 +21,10 @@ def parse_date(_date: Union[str, datetime, date]):
 
     return _date
 
-def calculate_ca_frame_times(mirror_position: np.ndarray, mirror_time: np.ndarray, imaging_rate: float):
+def calculate_ca_frame_times(
+        mirror_position: np.ndarray,
+        mirror_time: np.ndarray,
+        imaging_rate: float):
     mirror_position = np.squeeze(mirror_position)
     mirror_time = np.squeeze(mirror_time)
 
@@ -35,7 +38,10 @@ def calculate_ca_frame_times(mirror_position: np.ndarray, mirror_time: np.ndarra
     frame_times = np.arange(first_time, end_time, 1 / imaging_rate)
     return frame_times\
 
-def calculate_ca_frame_times_experimental(mirror_position: np.ndarray, mirror_time: np.ndarray, imaging_rate: float):
+def calculate_ca_frame_times_experimental(
+        mirror_position: np.ndarray,
+        mirror_time: np.ndarray,
+        imaging_rate: float):
     mirror_position = np.squeeze(mirror_position)
     mirror_time = np.squeeze(mirror_time)
 
@@ -62,8 +68,10 @@ def calculate_ca_frame_times_experimental(mirror_position: np.ndarray, mirror_ti
     frame_times = np.arange(first_time, end_time, 1 / imaging_rate)
     return frame_times
 
-
-def digest_folder(recording_path: Union[Path, str], imaging_rate: float, plane: int = 0):
+def digest_folder(
+        recording_path: Union[Path, str],
+        imaging_rate: float,
+        plane: int = 0):
     """
     Reads in data from suite2p's F.npy file and the Display.h5py and Io.h5py file
 
@@ -203,7 +211,10 @@ def digest_folder(recording_path: Union[Path, str], imaging_rate: float, plane: 
 
     return fluorescence, recording, phase, ca_rec_group_id_fun
 
-def process_recording(recording, phase, radial_bin_num: int = 16):
+def process_recording(
+        recording,
+        phase,
+        radial_bin_num: int = 16):
     """
         Adapt CMN stimuli to resampling.
     """
@@ -287,7 +298,6 @@ def process_recording(recording, phase, radial_bin_num: int = 16):
         closest_3_position_indices[patch_idx] = np.argsort(pairwise_distances[patch_idx])[
                                                 1:4]
     recording['closest_3_position_indices'] = closest_3_position_indices
-
 
 # EYETRACKING
 def generate_eyepos_masks(
