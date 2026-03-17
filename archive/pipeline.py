@@ -1,13 +1,13 @@
 import pickle
 from pathlib import Path
-from main_functions import *
-from plotting_functions import *
+from preprocess import *
+from plotting import *
 
 
 def main():
     #better to use \ as raw backslash
     # recording_path = r"example_data\fish1_20250815\2025-08-15_recording1" # example data
-    recording_path = r"data\2026-02-25_mb_fish1_rec2"
+    recording_path = r"../data/2026-02-25_mb_fish1_rec2"
     save_path = r"results\2026-02-25_mb_fish1_rec2_run2"
 
     fluorescence, recording, phase, ca_rec_group_id_fun = digest_folder(recording_path, plane=0)
@@ -77,8 +77,8 @@ def main():
         calculate_directional_preference(recording)
 
         # create directories if needed
-        Path(os.path.join(save_path, 'pdf')).mkdir(parents=True, exist_ok=True)
-        Path(os.path.join(save_path, 'png')).mkdir(parents=True, exist_ok=True)
+        Path(os.path.join(save_path, '../pdf')).mkdir(parents=True, exist_ok=True)
+        Path(os.path.join(save_path, '../png')).mkdir(parents=True, exist_ok=True)
         plot_rf_overview(recording, i, save_path)
 
 

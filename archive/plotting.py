@@ -182,9 +182,9 @@ def plot_rf_overview(recording, neuron_num, save_path: str = None):
     ax_quiv.set_aspect('equal')
 
     if save_path is not None:
-        png_path = os.path.join(save_path, 'png')
+        png_path = os.path.join(save_path, '../png')
         fig_cmn.savefig(f'{png_path}/{neuron_num}.png', dpi=300)
-        pdf_path = os.path.join(save_path, 'pdf')
+        pdf_path = os.path.join(save_path, '../pdf')
         fig_cmn.savefig(f'{pdf_path}/{neuron_num}.pdf', dpi=300)
         plt.close(fig_cmn)
     else:

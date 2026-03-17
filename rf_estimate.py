@@ -1,0 +1,225 @@
+import time
+import numpy as np
+from typing import Tuple, List
+from multiprocessing.shared_memory import SharedMemory
+import concurrent.futures
+
+def calculate_local_directions_generalAPI(motion_vectors: np.ndarray, bin_edges: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """
+        Calculate calcium-event-triggered averages (ETA), as described in Zhang Y., Huang R., et. at (2022).
+        Motion velocities are binned in to n (default=16) bins by their corresponding motion angles,
+        and then averaged to yield ETAs.
+        Parameters:
+            motion_vectors: np.array
+                Motion vectors at timepoints with calcium-event.
+
+    """
+    angles = np.arctan2(motion_vectors[:, :, 1], motion_vectors[:, :, 0])
+    velocities = np.linalg.norm(motion_vectors, axis=2)
+    # Backwards transform (keep for reference):
+    # motion_vectors_2d = np.zeros((*motion_angles.shape[:2], 2))
+    # motion_vectors_2d[:,:,0] = motion_velocities * np.cos(motion_angles)
+    # motion_vectors_2d[:,:,1] = motion_velocities * np.sin(motion_angles)
+
+    # Calculate bin vectors for each patch and frame weighted by the local velocities
+    bin_norms = velocities[:, :, None] * np.logical_and(
+        angles[:, :, None] >= bin_edges[:-1],
+        angles[:, :, None] < bin_edges[1:])
+
+    # norms, ETAs
+    return bin_norms, bin_norms.mean(axis=0)
+
+def bootstrap_shm(event_train, ang_name, ang_shape, ang_dtype, vel_name, vel_shape, vel_dtype, bins):
+    """
+        Worker for one bootstrap repetition used in calculate_radial_bin_bs_etas
+        in parallel processing. Uses shared memory for optimizing runtime.
+        This function implements the same as def calculate_local_directions(..): but adapted for this cause.
+    """
+    # access shared memory
+    shm_ang = SharedMemory(name=ang_name)
+    ang = np.ndarray(ang_shape, dtype=ang_dtype, buffer=shm_ang.buf)[event_train]
+
+    shm_vel = SharedMemory(name=vel_name)
+    vel = np.ndarray(vel_shape, dtype=vel_dtype, buffer=shm_vel.buf)[event_train]
+
+    # calculate calcium-event-triggered averge (ETA)
+    ETA = np.mean(vel[:, :, None] * np.logical_and(bins[:-1] <= ang[:, :, None], ang[:, :, None] <= bins[1:]),
+            axis=0)
+    # release shared memory (but dont unlink?)
+    shm_ang.close()
+    shm_vel.close()
+    return ETA
+
+def calculate_radial_bin_bs_etas(
+        motion_vectors: np.ndarray,
+        signal: np.ndarray,
+        cmn_phases,
+        sample_rate,
+        radial_bin_edges,
+        bootstrap_num: int = 1024,
+        num_workers: int = 12
+):
+    """
+        Calculate bootstrapped distribution of calcium event triggered averages (ETA's).
+        - precompute all angles and velocities once
+        - shared memory for all parallel processes, no problem bc its only read by bootstrapping function
+        - np.float32 because it is the fastest float type on common processor architectures
+
+        Parameters:
+            motion_vectors: np.array (float) (time x n_radial_bins x 2)
+                typical dimensions; (~30 000, 320, 2)
+                cmn_motion_vectors_2d. CMN motion vectors projected to 2D. ETA calculation is done fully in 2D.
+            signal: np.array (bool) (time x 1)
+                indicates timepoints with calcium events during CMN stimulation periods.
+            cmn_phases: np.array (bool) (time x 1)
+                indicates timepoints with cmn stimulation.
+            sample_rate: float
+                display rate of the CMN stimulus, sampling rate for all time axes used in this function.
+            radial_bin_edges: np.array (n_bins, 1)
+                angles for bin edges of binning used in ETA calculations. note: these are angular bins (not spatial).
+            bootstrap_num: int
+                number of bootstrapping iterations.
+            num_workers: int
+                number of parallel processes in computing bootstrapping repetitions. 12 should be fast
+                while still leaving enough resources to keep using PC while script is running on a 14 core cpu.
+        Returns:
+            radial_bin_etas:
+                true ETAs
+            radial_bin_bs_etas:
+                bootstrapped ETAs
+
+    """
+    motion_vectors_cmn = motion_vectors[cmn_phases]
+    signal_within_cmn_selection = signal[cmn_phases]
+
+    angles = np.arctan2(
+        motion_vectors_cmn[:, :, 0],
+        motion_vectors_cmn[:, :, 1]
+    ).astype(np.float32)
+    velocities = np.linalg.norm(motion_vectors_cmn, axis=2).astype(np.float32)
+    radial_bin_edges = radial_bin_edges.astype(np.float32)
+
+    ang_shm = SharedMemory(create=True, size=angles.nbytes)
+    ang_shared = np.ndarray(angles.shape, dtype=angles.dtype, buffer=ang_shm.buf)
+    ang_shared[:] = angles
+
+    vel_shm = SharedMemory(create=True, size=velocities.nbytes)
+    vel_shared = np.ndarray(velocities.shape, dtype=velocities.dtype, buffer=vel_shm.buf)
+    vel_shared[:] = velocities
+
+    # calculate permutations
+    frame_no = cmn_phases.sum()
+    min_frame_shift = 4 * sample_rate # TODO; this was only 2x in original paper
+    max_frame_shift = int(frame_no - min_frame_shift)
+    frame_shifts = np.random.randint(min_frame_shift, max_frame_shift, size=(bootstrap_num))
+    signal_indices = signal_within_cmn_selection.nonzero()[0][:, None]
+    event_trains = np.mod(signal_indices + frame_shifts, signal_within_cmn_selection.size).T
+
+    start_time = time.time() # time parallel computation
+    with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as exe:
+        futures = [exe.submit(
+            bootstrap_shm,
+            event_trains[i],
+            ang_shm.name,
+            angles.shape,
+            angles.dtype,
+            vel_shm.name,
+            velocities.shape,
+            velocities.dtype,
+            radial_bin_edges,
+        )
+            for i in range(bootstrap_num)]
+
+        # Calculate vector ETAs for each local radial bin
+        radial_bin_bs_etas = np.array([f.result() for f in futures])
+    print("--- %s seconds ---" % (time.time() - start_time)) # time parallel computation
+    # release shared memory
+    ang_shm.close()
+    vel_shm.close()
+    ang_shm.unlink()
+    vel_shm.unlink()
+    return radial_bin_bs_etas
+
+def calculate_directional_significance_generalAPI(
+        radial_bin_etas,
+        radial_bin_bs_etas,
+        bernoulli_alpha: float = 0.05):
+    bootstrap_num = radial_bin_bs_etas.shape[0]
+
+    cdf_values = ((radial_bin_etas > radial_bin_bs_etas).sum(axis=0) / bootstrap_num)
+    greater_than = cdf_values > 1 - bernoulli_alpha / 2
+    less_than = cdf_values < bernoulli_alpha / 2
+    radial_bin_p_values = cdf_values.copy()
+    radial_bin_p_values[greater_than] = 1 - cdf_values[greater_than]
+
+    radial_bin_significances = np.zeros_like(radial_bin_p_values)
+    radial_bin_significances[greater_than] = 1
+    radial_bin_significances[less_than] = -1
+
+    return radial_bin_significances, radial_bin_p_values
+
+def calculate_directional_significance_permutations_generalAPI(
+        radial_bin_bs_etas: np.ndarray,):
+    radial_bin_bs_significances = np.zeros_like(radial_bin_bs_etas, dtype=np.int64)
+    radial_bin_bs_p_values = np.zeros(radial_bin_bs_etas.shape)
+    for i, bs_etas in enumerate(radial_bin_bs_etas):
+        significances, p_values = calculate_directional_significance_generalAPI(
+            bs_etas,
+            radial_bin_bs_etas,
+        )
+        radial_bin_bs_p_values[i] = p_values
+        radial_bin_bs_significances[i] = significances
+    return radial_bin_bs_significances, radial_bin_bs_p_values
+
+def calc_preferred_directions_generalAPI(
+        bin_etas: np.ndarray,
+        bin_significances: np.ndarray,
+        bin_centers: np.ndarray) -> np.ndarray:
+    """
+        Calculate estimated RF.
+        Calculates preferred direction of each radial patch/bin as weighted sum of significant directions.
+        Weigh each direction by its calcium-event-triggered average (ETA).
+        Influence of ETA absolute values is normed out.
+        (note: this is a different binning than the one done during calculation of the ETA.)
+
+        Parameters:
+            bin_etas: shape (patch_num, bin_num)
+                calcium-event-triggered averages
+            bin_significances: shape (patch_num, bin_num)
+                1 if bin is significantly excitatory
+                -1 if bin is significantly suppressive
+                0 if bin is not significant
+            bin_centers: shape (bin_num,)
+                radial bin centers. centers of the radial bins in which angles are divided in ETA calculation.
+                bin_num = 16 in the default configuration
+
+        Returns:
+            population_vectors: shape (patch_num,)
+    """
+
+    # Calculate direction vectors for given angles
+    direction_vectors = np.array([[np.cos(a), np.sin(a)] for a in bin_centers])
+
+    # Calculate population vector for each patch based on significant direction bins
+    population_vectors = np.zeros(bin_etas.shape[:1] + (2,))
+    for idx, (etas, signs) in enumerate(zip(bin_etas, bin_significances)):
+
+        if np.any(signs):
+
+            # Select excitatory bins
+            idcs = np.where(signs)[0]
+
+            # Calculate
+            # normed in terms of ETA, this means that large vectors arise not from high ETA,
+            # but from very coherent ETAs in one bin (weird a bit)
+            # this means that vecs_pop are not unitary vectors!
+            vecs = etas[idcs][:, None] * direction_vectors[idcs]
+            vec_pop = np.sum(vecs, axis=0) / np.sum(etas)  # TODO: might need to do etas[idcs] instead
+
+        else:
+            vec_pop = np.array([0, 0])
+
+        # Append
+        population_vectors[idx] = vec_pop
+
+    return population_vectors

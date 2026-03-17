@@ -1,4 +1,4 @@
-from plotting_functions import *
+from archive.plotting import *
 import numpy as np
 import os
 import matplotlib

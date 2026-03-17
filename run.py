@@ -1,14 +1,19 @@
-import os, h5py, pickle, time, matplotlib
-import numpy as np
-import matplotlib.pyplot as plt
+# import os, h5py, pickle, time, matplotlib
+# import numpy as np
+# import matplotlib.pyplot as plt
+
+from os.path import join
 
 from scipy.optimize import minimize
 from scipy.interpolate import interp1d
 
-from main_functions import *
-from main_functions_generalAPI import *
-from plotting_functions import *
-from plotting_functions_generalAPI import *
+from preprocess import *
+from rf_estimate import *
+from cluster import *
+# from main_functions import *
+from functions import *
+# from plotting_functions import *
+from plot import *
 
 # manually defined Parameters!!!==============
 # FISH AND RECORDING
@@ -39,25 +44,28 @@ NEURON_SELECTION = None
 
 
 def main():
-    rec_path = os.path.join('data', REC_NAME)
-    save_path = os.path.join('results', REC_NAME, 'plane' + str(PLANE))
-    camera = h5py.File(os.path.join(rec_path, 'Camera.hdf5'), 'r')
-    fluorescence, rec, phase, _ = digest_folder(rec_path, imaging_rate=IMG_RATE, plane=PLANE)
+    rec_path = join('data', REC_NAME)
+    save_path = join('results', REC_NAME, 'plane' + str(PLANE))
+    camera = h5py.File(join(rec_path, 'Camera.hdf5'), 'r')
+    fluorescence, rec, phase, _ = digest_folder(rec_path, IMG_RATE, PLANE)
 
     # add resampled CMN data to resampled time domain for each phase
     # (info: time domain is resampled from ~2.1Hz to 10Hz in digest_folder())
     process_recording(rec, phase, radial_bin_num=16)
 
     if LOAD_DFF:
-        dff_original = np.load(os.path.join(save_path, "dff_original.npy"))
-        dff_resampled = (
-            scipy.interpolate.interp1d(rec['ca_times'], dff_original, kind='nearest')(
-                rec['time_resampled']))
+        dff_original = np.load(join(save_path, "dff_original.npy"))
+        dff_resampled = (interp1d(
+            rec['ca_times'],
+            dff_original,
+            kind='nearest')(rec['time_resampled']))
     else:
-        dff_original, dff_resampled =(
-            calculate_dff_vectorized(rec, fluorescence, rec['imaging_rate']))
+        dff_original, dff_resampled = calculate_dff_vectorized(
+            rec,
+            fluorescence,
+            rec['imaging_rate'])
         Path(save_path).mkdir(parents=True, exist_ok=True)
-        np.save(os.path.join(save_path, "dff_original.npy"), dff_original)
+        np.save(join(save_path, "dff_original.npy"), dff_original)
 
 
     q1_mask, q3_mask=generate_eyepos_masks(
@@ -74,7 +82,7 @@ def main():
     E_list_q1, E_list_q3 = [], []
     F_list_q1, F_list_q3 = [], []
     FoC_list_q1, FoC_list_q3 = [], []
-    FE1_sim_list, FE3_sim_list = [], []
+    # FE1_sim_list, FE3_sim_list = [], []
 
     # default int to run for all neurons in dataset
     if NEURON_SELECTION is None:
@@ -95,9 +103,9 @@ def main():
         # bootstrapped ETAs
         if LOAD_PERMUTATION_RESULTS:
             # load
-            _path = os.path.join(save_path, 'bootstrapped RBEs', )
-            q1_rbe_bootstrapped = np.load(os.path.join(_path, f'neuron_{str(i)}_bsRBE_q1.npy'))
-            q3_rbe_bootstrapped = np.load(os.path.join(_path, f'neuron_{str(i)}_bsRBE_q3.npy'))
+            _path = join(save_path, 'bootstrapped RBEs', )
+            q1_rbe_bootstrapped = np.load(join(_path, f'neuron_{str(i)}_bsRBE_q1.npy'))
+            q3_rbe_bootstrapped = np.load(join(_path, f'neuron_{str(i)}_bsRBE_q3.npy'))
         else:
             # calculate
             q1_rbe_bootstrapped = calculate_radial_bin_bs_etas(
@@ -117,10 +125,10 @@ def main():
                 bootstrap_num=1024,
                 num_workers=22,)
             # save bootstrapped ETAs
-            _path=os.path.join(save_path, 'bootstrapped RBEs',)
+            _path=join(save_path, 'bootstrapped RBEs',)
             Path(_path).mkdir(parents=True, exist_ok=True)
-            np.save(os.path.join(_path, f'neuron_{str(i)}_bsRBE_q1.npy'), q1_rbe_bootstrapped)
-            np.save(os.path.join(_path, f'neuron_{str(i)}_bsRBE_q3.npy'), q3_rbe_bootstrapped)
+            np.save(join(_path, f'neuron_{str(i)}_bsRBE_q1.npy'), q1_rbe_bootstrapped)
+            np.save(join(_path, f'neuron_{str(i)}_bsRBE_q3.npy'), q3_rbe_bootstrapped)
 
         if RUN_ONLY_PERMUTATION_TEST:
             continue
@@ -236,12 +244,12 @@ def main():
 
     FoC_array_q1=np.concatenate([FoC[:,None].T for FoC in FoC_list_q1])
     FoC_array_q3=np.concatenate([FoC[:,None].T for FoC in FoC_list_q3])
-    FoC_path = os.path.join(save_path, 'FoCs')
+    FoC_path = join(save_path, 'FoCs')
     Path(FoC_path).mkdir(parents=True, exist_ok=True)
-    np.save(os.path.join(FoC_path, f'FoCq1'), FoC_array_q1)
-    np.save(os.path.join(FoC_path, f'FoCq3'), FoC_array_q3)
+    np.save(join(FoC_path, f'FoCq1'), FoC_array_q1)
+    np.save(join(FoC_path, f'FoCq3'), FoC_array_q3)
 
-    print('pipeline ran sucessfully')
+    print('pipeline ran successfully')
 
 if __name__ == '__main__':
     main()
