@@ -153,4 +153,4 @@ def calc_cluster_signif(
 
     cluster_significant_indices = np.where(cluster_significances)[0]
 
-    return original_cluster_scores, bs_max_cluster_scores, cluster_significant_indices
+    return cluster_significant_indices

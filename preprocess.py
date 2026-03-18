@@ -4,14 +4,13 @@ from tqdm import tqdm
 from pathlib import Path
 from datetime import date, datetime
 from typing import Union, Tuple
-from functions import project_to_local_2d_vectors
+from utils import project_to_local_2d_vectors
+from numpy.lib.stride_tricks import sliding_window_view
 
 def animal_id_from_path(path: Union[Path, str]) -> str:
     return Path(path).as_posix().split('/')[-2]
-
 def recording_id_from_path(path: Union[Path, str]) -> Tuple[str, str]:
     return Path(path).as_posix().split('/')[-1].split('_')  # type: ignore
-
 def parse_date(_date: Union[str, datetime, date]):
     if isinstance(_date, str):
         _date = datetime.strptime(_date, '%Y-%m-%d')
@@ -21,7 +20,7 @@ def parse_date(_date: Union[str, datetime, date]):
 
     return _date
 
-def calculate_ca_frame_times(
+def calc_ca_times(
         mirror_position: np.ndarray,
         mirror_time: np.ndarray,
         imaging_rate: float):
@@ -38,7 +37,8 @@ def calculate_ca_frame_times(
     frame_times = np.arange(first_time, end_time, 1 / imaging_rate)
     return frame_times\
 
-def calculate_ca_frame_times_experimental(
+# currently unused
+def calc_ca_times_experimental(
         mirror_position: np.ndarray,
         mirror_time: np.ndarray,
         imaging_rate: float):
@@ -119,7 +119,7 @@ def digest_folder(
         mirror_time = np.squeeze(io_file['di_frame_sync_time'])[:]
 
         # Calculate frame timing
-        ca_times = calculate_ca_frame_times(mirror_position, mirror_time, imaging_rate=imaging_rate) # example data=2.1798, 1.9989
+        ca_times = calc_ca_times(mirror_position, mirror_time, imaging_rate=imaging_rate) # example data=2.1798, 1.9989
         record_group_ids = io_file['__record_group_id'][:].squeeze()
         record_group_ids_time = io_file['__time'][:].squeeze()
 
@@ -299,8 +299,96 @@ def process_recording(
                                                 1:4]
     recording['closest_3_position_indices'] = closest_3_position_indices
 
+def calc_dff(
+        recording,
+        fluorescences,
+        imaging_rate,
+        window_size: int = 120,
+        percentile: int = 10):
+    """
+        Calculate_dff.
+    """
+    print('Calculate dff')
+    window_size = int(window_size * imaging_rate)
+    if window_size % 2 == 0:
+        window_size += 1
+    half_window_size = int((window_size - 1) // 2)
+
+    # padding
+    pad_left  = np.median(fluorescences[:, :half_window_size], axis=1, keepdims=True) \
+                    * np.ones((1, half_window_size))
+    pad_right = np.median(fluorescences[:, -half_window_size:], axis=1, keepdims=True) \
+                    * np.ones((1, half_window_size))
+    f_padded = np.concatenate([pad_left, fluorescences, pad_right], axis=1)
+
+    # vectorized version of nested loop
+    windows = sliding_window_view(f_padded, [1, window_size])
+    thresholds = np.percentile(windows, percentile, axis=3, keepdims=True)
+    windows_masked = np.where(windows < thresholds, windows, np.nan)
+    baselines = np.nanmean(windows_masked, axis=3).squeeze()
+    Dff_all = fluorescences - baselines
+
+    Dff_resampled = scipy.interpolate.interp1d(
+        recording['ca_times'], Dff_all, kind='nearest'
+    )(recording['time_resampled'])
+
+    recording['Dff_resampled'] = Dff_resampled
+    return Dff_all, Dff_resampled
+
+def detect_events(
+        cmn_selection, # timepoints with CMN stimulus
+        dff,
+        sample_rate,
+        excluded_percentile: int = 25,
+        kernel_sd: float = 0.5):
+    """
+        Detect calcium-events in raw fluorescence trace. Done with a different, more simple method
+         than in the 2019 paper.
+
+        Parameters:
+            cmn_selection: np.array (timepoints x 1)
+                Boolean mask of timepoints with CMN stimulus
+            dff: np.array (timepoints x 1)
+                raw fluorescence trace of one neuron
+            sample_rate: float
+                sample rate of the fluorescence trace
+            excluded_percentile: int
+            kernel_sd: float
+                determines smoothing of signal
+        Returns:
+            signal_selection: np.array (timepoints x 1)
+            signal_length: int
+            signal_proportion: float
+            signal_dff_mean: float
+    """
+    # init Gaussian kernel with mean=0 and standard deviation 0.5 (adjustable)
+    kernel_dts = 10 * sample_rate # time accuracy of kernel
+    kernel_t = np.linspace(-5, 5, kernel_dts)
+    norm_kernel = scipy.stats.norm.pdf(kernel_t, scale=kernel_sd)
+
+    # pad, then Smoothen DFF with Gaussian kernel
+    dff_plot_pad = np.zeros(dff.shape[0] + kernel_dts - 1)
+    dff_plot_pad[kernel_dts // 2:-kernel_dts // 2 + 1] = dff
+    dff_conv = scipy.signal.convolve(dff_plot_pad, norm_kernel, mode='valid', method='fft')
+
+    # Calculate derivative
+    diff = np.diff(dff_conv, append=[0])
+
+    # pad, then Smoothen derivative
+    diff1_pad = np.zeros(diff.shape[0] + kernel_dts - 1)
+    diff1_pad[kernel_dts // 2:-kernel_dts // 2 + 1] = diff
+    diff1_conv = scipy.signal.convolve(diff1_pad, norm_kernel, mode='valid', method='fft')
+
+    # Calculate signal based on smoothened derivative
+    signal_selection = (diff1_conv > 0) & cmn_selection
+    # Exclude bottom 25% percentile
+    signal_selection &= dff >= np.percentile(dff[signal_selection], excluded_percentile)
+
+    return signal_selection, sum(signal_selection), sum(signal_selection)/sum(cmn_selection), np.mean(dff[signal_selection])
+
+
 # EYETRACKING
-def generate_eyepos_masks(
+def calc_eyepos_masks(
         eyepos_left,
         eyepos_right,
         eyepos_time,

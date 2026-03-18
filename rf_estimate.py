@@ -1,6 +1,6 @@
 import time
 import numpy as np
-from typing import Tuple, List
+from typing import Tuple
 from multiprocessing.shared_memory import SharedMemory
 import concurrent.futures
 
@@ -205,28 +205,26 @@ def estimate_rf(
     """
 
     # Calculate direction vectors for given angles
-    direction_vectors = np.array([[np.cos(a), np.sin(a)] for a in bin_centers])
+    direction_vectors = np.array([[np.cos(a), np.sin(a)]
+                                  for a in bin_centers])
 
-    # Calculate population vector for each patch based on significant direction bins
+    # Calculate population vector for each patch
+    # based on significant direction bins
     population_vectors = np.zeros(bin_etas.shape[:1] + (2,))
-    for idx, (etas, signs) in enumerate(zip(bin_etas, bin_significances)):
-
+    for idx, (etas, signs) in (
+            enumerate(zip(bin_etas, bin_significances))):
         if np.any(signs):
-
             # Select excitatory bins
             idcs = np.where(signs)[0]
-
             # Calculate
             # normed in terms of ETA, this means that large vectors arise not from high ETA,
             # but from very coherent ETAs in one bin (weird a bit)
             # this means that vecs_pop are not unitary vectors!
             vecs = etas[idcs][:, None] * direction_vectors[idcs]
             vec_pop = np.sum(vecs, axis=0) / np.sum(etas)  # TODO: might need to do etas[idcs] instead
-
         else:
             vec_pop = np.array([0, 0])
 
         # Append
         population_vectors[idx] = vec_pop
-
     return population_vectors
