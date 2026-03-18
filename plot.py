@@ -90,7 +90,6 @@ def plot_rf_overview_generalAPI(
         x, y, _ = cart2sph(*positions.T)
         preferred_vectors = estimatedRF
         preferred_velocities = np.linalg.norm(estimatedRF, axis=1)
-        cluster_significant_indices = cluster_significant_indices
         selected_clusters = [cluster_unique_patch_indices[_idx] for _idx in cluster_significant_indices]
 
         for s_c, idcs in enumerate(selected_clusters):
@@ -152,3 +151,21 @@ def plot_eyepositions(
     plt.vlines((q3_max_left, q3_max_left-q3_widht), q3_max_right-q3_height, q3_max_right)
 
     return q1, q3, out
+
+def plot_eyepositions_mask(
+        eyepos,
+        q1,
+        q3):
+    """
+        Scatterplot of eye positions with existing quadrant masks.
+    """
+    fig, ax = plt.subplots(figsize=(20,20))
+    out = np.logical_not(q1 | q3)
+
+    ax.scatter(eyepos[q1,0], eyepos[q1,1], s=1., alpha=0.6, color='red')
+    ax.scatter(eyepos[q3,0], eyepos[q3,1], s=1., alpha=0.6, color='blue')
+    ax.scatter(eyepos[out,0], eyepos[out,1], s=1., alpha=0.6, color='grey')
+    ax.set_xlabel('right eye position (no unit, normalized)', fontsize=20, color='black')
+    ax.set_ylabel('left eye position (no unit, normalized)', fontsize=20, color='black')
+    ax.tick_params(axis='both', which='major', labelsize=16, color='black')
+    plt.show()

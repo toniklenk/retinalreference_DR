@@ -50,7 +50,9 @@ def _calc_etas_bs_worker(
     vel = np.ndarray(vel_shape, dtype=vel_dtype, buffer=shm_vel.buf)[event_train]
 
     # calculate calcium-event-triggered averge (ETA)
-    ETA = np.mean(vel[:, :, None] * np.logical_and(bins[:-1] <= ang[:, :, None], ang[:, :, None] <= bins[1:]),
+    ETA = np.mean(vel[:, :, None] * np.logical_and(
+        bins[:-1] <= ang[:, :, None],
+        bins[1:] >= ang[:, :, None]),
             axis=0)
     # release shared memory (but dont unlink?)
     shm_ang.close()

@@ -6,6 +6,7 @@ from datetime import date, datetime
 from typing import Union, Tuple
 from utils import project_to_local_2d_vectors
 from numpy.lib.stride_tricks import sliding_window_view
+from plot import plot_eyepositions_mask
 
 def animal_id_from_path(path: Union[Path, str]) -> str:
     return Path(path).as_posix().split('/')[-2]
@@ -396,7 +397,8 @@ def calc_eyepos_masks(
         q1_min_left,
         q1_min_right,
         q3_max_left,
-        q3_max_right):
+        q3_max_right,
+        verbose=False):
     """
         Generate maks for selecting data that corresponds to eyepositions to the left and right, respectively.
         Eye positions are resampled to given timeline before selection.
@@ -417,7 +419,7 @@ def calc_eyepos_masks(
         np.array(eyepos_left).squeeze(),
         np.array(eyepos_right).squeeze()))
 
-    # eye_pos = (eye_pos - eye_pos.mean(axis=0)) / eye_pos.std(axis=0)
+    eye_pos = (eye_pos - eye_pos.mean(axis=0)) / eye_pos.std(axis=0)
 
     eye_pos_resampled = scipy.interpolate.interp1d(
         np.array(eyepos_time).squeeze(),
@@ -432,5 +434,9 @@ def calc_eyepos_masks(
     q3_mask = np.logical_and(
         eye_pos_resampled[:, 0] < q3_max_left,
         eye_pos_resampled[:, 1] < q3_max_right)
+
+    # scatterplot to check quadrants
+    if verbose:
+        plot_eyepositions_mask(eye_pos_resampled, q1_mask, q3_mask)
 
     return q1_mask, q3_mask
