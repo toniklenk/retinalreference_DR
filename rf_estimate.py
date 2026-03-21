@@ -1,4 +1,4 @@
-import time
+import time, torch
 import numpy as np
 from typing import Tuple
 from multiprocessing.shared_memory import SharedMemory
@@ -6,6 +6,8 @@ import concurrent.futures
 
 def calc_etas(
         motion_vectors: np.ndarray,
+        signal: np.ndarray,
+        cmn: np.ndarray,
         bin_edges: np.ndarray
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -13,10 +15,18 @@ def calc_etas(
         Motion velocities are binned in to n (default=16) bins by their corresponding motion angles,
         and then averaged to yield ETAs.
         Parameters:
-            motion_vectors: np.array
-                Motion vectors at timepoints with calcium-event.
+            motion_vectors: np.array (time x patches(320) x 2)
+                Motion vectors
+            signal: np.array (time x 1)
+                Timepoints with calcium events.
+            cmn: np.array (time x 1)
+                Timepoints with CMN stimulation.
+            bin_edges: np.array (n)
+                Edges for binning during ETA calculation in radians.
 
     """
+    motion_vectors = motion_vectors[cmn & signal]
+
     angles = np.arctan2(motion_vectors[:, :, 1], motion_vectors[:, :, 0])
     velocities = np.linalg.norm(motion_vectors, axis=2)
     # Backwards transform (keep for reference):
@@ -40,7 +50,7 @@ def _calc_etas_bs_worker(
     """
         Worker for one bootstrap repetition used in calculate_radial_bin_bs_etas
         in parallel processing. Uses shared memory for optimizing runtime.
-        This function implements the same as def calculate_local_directions(..): but adapted for this cause.
+        This function implements the same as def calc_etas but adapted.
     """
     # access shared memory
     shm_ang = SharedMemory(name=ang_name)
@@ -49,10 +59,10 @@ def _calc_etas_bs_worker(
     shm_vel = SharedMemory(name=vel_name)
     vel = np.ndarray(vel_shape, dtype=vel_dtype, buffer=shm_vel.buf)[event_train]
 
-    # calculate calcium-event-triggered averge (ETA)
+    # calculate calcium-event-triggered average (ETA)
     ETA = np.mean(vel[:, :, None] * np.logical_and(
         bins[:-1] <= ang[:, :, None],
-        bins[1:] >= ang[:, :, None]),
+        bins[1:] > ang[:, :, None]),
             axis=0)
     # release shared memory (but dont unlink?)
     shm_ang.close()
@@ -62,7 +72,7 @@ def _calc_etas_bs_worker(
 def calc_etas_bs(
         motion_vectors: np.ndarray,
         signal: np.ndarray,
-        cmn_phases,
+        cmn,
         sample_rate,
         radial_bin_edges,
         bootstrap_num: int = 1024,
@@ -97,14 +107,14 @@ def calc_etas_bs(
                 bootstrapped ETAs
 
     """
-    motion_vectors_cmn = motion_vectors[cmn_phases]
-    signal_within_cmn_selection = signal[cmn_phases]
+    motion_vectors = motion_vectors[cmn]
+    signal = signal[cmn]
 
     angles = np.arctan2(
-        motion_vectors_cmn[:, :, 0],
-        motion_vectors_cmn[:, :, 1]
+        motion_vectors[:, :, 0],
+        motion_vectors[:, :, 1]
     ).astype(np.float32)
-    velocities = np.linalg.norm(motion_vectors_cmn, axis=2).astype(np.float32)
+    velocities = np.linalg.norm(motion_vectors, axis=2).astype(np.float32)
     radial_bin_edges = radial_bin_edges.astype(np.float32)
 
     ang_shm = SharedMemory(create=True, size=angles.nbytes)
@@ -116,12 +126,12 @@ def calc_etas_bs(
     vel_shared[:] = velocities
 
     # calculate permutations
-    frame_no = cmn_phases.sum()
+    frame_no = cmn.sum()
     min_frame_shift = 4 * sample_rate # TODO; this was only 2x in original paper
     max_frame_shift = int(frame_no - min_frame_shift)
     frame_shifts = np.random.randint(min_frame_shift, max_frame_shift, size=(bootstrap_num))
-    signal_indices = signal_within_cmn_selection.nonzero()[0][:, None]
-    event_trains = np.mod(signal_indices + frame_shifts, signal_within_cmn_selection.size).T
+    signal_indices = signal.nonzero()[0][:, None]
+    event_trains = np.mod(signal_indices + frame_shifts, signal.size).T
 
     start_time = time.time() # time parallel computation
     with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as exe:
@@ -147,6 +157,38 @@ def calc_etas_bs(
     ang_shm.unlink()
     vel_shm.unlink()
     return radial_bin_bs_etas
+
+# def calc_etas_bs_torch(
+#         motion_vectors: np.ndarray,
+#         signal: np.ndarray,
+#         cmn,
+#         sample_rate,
+#         bins,
+#         bootstrap_num: int = 1024,
+#         num_workers: int = 12):
+#     motion_vectors = motion_vectors[cmn]
+#     signal = signal[cmn]
+#
+#     frame_no = cmn.sum()
+#     min_frame_shift = 4 * sample_rate  # TODO; this was only 2x in original paper
+#     max_frame_shift = int(frame_no - min_frame_shift)
+#     frame_shifts = np.random.randint(min_frame_shift, max_frame_shift, size=(bootstrap_num))
+#     signal_indices = signal.nonzero()[0][:, None]
+#     event_trains = np.mod(signal_indices + frame_shifts, signal.size).T
+#
+#     # move to GPU
+#     motion_vectors = torch.from_numpy(motion_vectors).to('cuda')
+#     event_trains = torch.from_numpy(event_trains).to('cuda')
+#     bins = torch.from_numpy(bins).to('cuda')
+#
+#     ang = np.arctan2(
+#         motion_vectors[:, :, 0],
+#         motion_vectors[:, :, 1]
+#     ).astype(np.float32)
+#     velocities = np.linalg.norm(motion_vectors, axis=2)
+#
+#     permutation_samples = motion_torch[event_trains_torch]
+
 
 def calc_perm_statistic(
         radial_bin_etas,

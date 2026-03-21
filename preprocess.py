@@ -327,7 +327,7 @@ def calc_dff(
     thresholds = np.percentile(windows, percentile, axis=3, keepdims=True)
     windows_masked = np.where(windows < thresholds, windows, np.nan)
     baselines = np.nanmean(windows_masked, axis=3).squeeze()
-    Dff_all = fluorescences - baselines
+    Dff_all = (fluorescences - baselines) / baselines
 
     Dff_resampled = scipy.interpolate.interp1d(
         recording['ca_times'], Dff_all, kind='nearest'

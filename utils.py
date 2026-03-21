@@ -32,6 +32,15 @@ def project_to_local_2d_vectors(
 
     return vectors_2d
 
+def cart2sph(x, y, z):
+    """
+        Transform cartesian coordinates to spherical coordinates.
+    """
+    hxy = np.hypot(x, y)
+    r = np.hypot(hxy, z)
+    elevation = np.arctan2(z, hxy)
+    azimuth = -np.arctan2(y, x)
+    return np.array([azimuth, elevation, r])
 
 def FE_similarity(F, E):
     """
